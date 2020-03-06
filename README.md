@@ -33,3 +33,6 @@ A program that allows you to extract .farc files or create them from folders.
 
 ### TXP Converter
 A program allows you to modify _tex.bin or .txd files by extracting them to .dds or .png files.
+
+### Sprites Dump
+A program allows you to quickly dump sprites from folder or .frac files.
