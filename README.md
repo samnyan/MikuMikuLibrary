@@ -49,6 +49,12 @@ Supported files:
 
 A program that allows you to extract or create FARC files. MM+ CPK files are also supported.
 
+The extractor auto-detects FATE/Grand Order Arcade `FARc` archives and uses
+`FgoFarcArchive`. DIVA `FArC` archives continue to use `FarcArchive`. FGO
+gzip/raw and chunked Zstandard entries can be extracted directly; encrypted
+entries still require the title-specific decoder described in the Aqua
+workspace's `docs/FATE_FGO_Arcade_SDEJ_10/RE/fgo_farc_quickbms_interop_notes.md`.
+
 # Special thanks
 
 * [ActualMandM](https://github.com/ActualMandM)

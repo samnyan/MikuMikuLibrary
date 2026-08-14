@@ -73,7 +73,9 @@ Destination is optional, which makes it possible to do a drag and drop onto the 
 
             using (var stream = File.OpenRead(sourceFileName))
             {
-                var farcArchive = BinaryFile.Load<FarcArchive>(stream);
+                IArchive farcArchive = IsFgoFarc(stream)
+                    ? BinaryFile.Load<FgoFarcArchive>(stream)
+                    : BinaryFile.Load<FarcArchive>(stream);
 
                 Directory.CreateDirectory(destinationFileName);
 
@@ -83,6 +85,15 @@ Destination is optional, which makes it possible to do a drag and drop onto the 
                     using (var source = farcArchive.Open(fileName, EntryStreamMode.OriginalStream))
                         source.CopyTo(destination);
                 }
+            }
+
+            static bool IsFgoFarc(Stream stream)
+            {
+                long position = stream.Position;
+                Span<byte> signature = stackalloc byte[4];
+                int read = stream.Read(signature);
+                stream.Position = position;
+                return read == 4 && Encoding.UTF8.GetString(signature) == "FARc";
             }
         }
 
