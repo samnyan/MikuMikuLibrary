@@ -1,4 +1,5 @@
 using System.IO.Compression;
+using System.Security.Cryptography;
 using MikuMikuLibrary.IO;
 using MikuMikuLibrary.IO.Common;
 using MikuMikuLibrary.IO.Sections;
@@ -13,9 +14,9 @@ namespace MikuMikuLibrary.Archives;
 /// FGO uses the <c>FARc</c> signature. This is a different on-disk variant from
 /// DIVA's <c>FArC</c> archive handled by <see cref="FarcArchive"/>. Integers in
 /// this variant are big-endian, and each entry carries its own compression flags.
-/// The reader supports unencrypted raw, gzip, and chunked Zstandard entries found
-/// in the FGO ROM. Chunked encrypted entries are indexed, but extraction is
-/// rejected until the title-specific key/chunk format is supplied.
+/// The reader supports raw, gzip, and chunked Zstandard entries found in the
+/// FGO ROM. Archive indexes and entry payloads use the same title key and
+/// AES-CBC layout when their encryption flag is set.
 /// </remarks>
 public sealed class FgoFarcArchive : BinaryFile, IArchive
 {
@@ -24,6 +25,10 @@ public sealed class FgoFarcArchive : BinaryFile, IArchive
     private const uint ChunkedGzipFlag = 0x12;
     private const uint ChunkedZstdFlag = 0x30;
     private const uint MinimumHeaderSize = 0x20;
+    // FGO Arcade initializes the common FARc key from the ASCII hex string
+    // 62EC7CD79141695E53592ACC10CDC04C during startup (see ago.exe).
+    private static readonly byte[] FgoArchiveKey = Convert.FromHexString(
+        "62EC7CD79141695E53592ACC10CDC04C");
 
     private readonly Dictionary<string, Entry> mEntries = new(StringComparer.OrdinalIgnoreCase);
 
@@ -79,39 +84,41 @@ public sealed class FgoFarcArchive : BinaryFile, IArchive
         IndexSize = reader.ReadUInt32();
         ArchiveFlags = reader.ReadUInt32();
         _ = reader.ReadUInt32(); // checksum
-        _ = reader.ReadUInt32(); // inner header size
-        BoundarySize = reader.ReadUInt32();
-        EntryCount = reader.ReadUInt32();
-        uint entrySize = reader.ReadUInt32();
 
         if (IndexSize < MinimumHeaderSize || IndexSize > reader.Length)
             throw new InvalidDataException($"Invalid FGO FArc index size: 0x{IndexSize:X}");
 
-        if (entrySize < 0x10)
-            throw new InvalidDataException($"Invalid FGO FArc entry size: 0x{entrySize:X}");
-
         if ((ArchiveFlags & EncryptionFlag) != 0)
-            throw new NotSupportedException("FGO FArc archives with encrypted indexes are not supported");
-
-        for (uint i = 0; i < EntryCount; i++)
         {
-            string name = ReadIndexString(reader, IndexSize);
-            uint offset = reader.ReadUInt32();
-            uint storedSize = reader.ReadUInt32();
-            uint uncompressedSize = reader.ReadUInt32();
-            uint flags = reader.ReadUInt32();
+            // For encrypted v3 archives IndexSize includes the eight-byte
+            // signature/size prefix. The encrypted payload starts at offset
+            // 0x10, consists of a 16-byte IV followed by AES-CBC ciphertext,
+            // and contains the remaining index header plus entry records.
+            int encryptedSize = checked((int)IndexSize - 8);
+            if (encryptedSize < 0x20 || reader.Position > reader.Length - encryptedSize)
+                throw new InvalidDataException("Encrypted FGO FArc index is truncated");
 
-            if (entrySize > 0x10)
-                reader.SeekCurrent(entrySize - 0x10);
+            byte[] encryptedIndex = reader.ReadBytes(encryptedSize);
+            byte[] decryptedIndex = DecryptIndex(encryptedIndex);
+            using var indexReader = new EndianBinaryReader(
+                new MemoryStream(decryptedIndex, writable: false),
+                reader.Encoding,
+                Endianness.Big,
+                leaveOpen: false);
 
-            if (string.IsNullOrEmpty(name))
-                throw new InvalidDataException($"FGO FArc entry {i} has an empty name");
-
-            if (offset > reader.Length || storedSize > reader.Length - offset)
-                throw new InvalidDataException($"FGO FArc entry '{name}' points outside the archive");
-
-            mEntries[name] = new Entry(name, offset, storedSize, uncompressedSize, flags);
+            _ = indexReader.ReadUInt32(); // inner header size
+            BoundarySize = indexReader.ReadUInt32();
+            EntryCount = indexReader.ReadUInt32();
+            uint encryptedEntrySize = indexReader.ReadUInt32();
+            ReadEntries(indexReader, encryptedEntrySize, reader.Length);
+            return;
         }
+
+        _ = reader.ReadUInt32(); // inner header size
+        BoundarySize = reader.ReadUInt32();
+        EntryCount = reader.ReadUInt32();
+        uint entrySize = reader.ReadUInt32();
+        ReadEntries(reader, entrySize, reader.Length);
 
         // The v3 LIMIT/IndexSize value is the loop boundary used by the game,
         // not necessarily the byte immediately after the final variable-length
@@ -128,29 +135,20 @@ public sealed class FgoFarcArchive : BinaryFile, IArchive
         if (!mEntries.TryGetValue(fileName, out var entry))
             throw new KeyNotFoundException($"FGO FArc entry not found: {fileName}");
 
-        if ((entry.Flags & EncryptionFlag) != 0)
-            throw new NotSupportedException(
-                $"FGO FArc entry '{fileName}' is encrypted; provide the title-specific chunk key before extracting it");
-
         var output = new MemoryStream(entry.UncompressedSize > 0 ? checked((int)entry.UncompressedSize) : 0);
         using (var source = new StreamView(mStream, mStream, entry.Offset, entry.StoredSize, true))
         {
-            if ((entry.Flags & ChunkedZstdFlag) == ChunkedZstdFlag)
+            if ((entry.Flags & EncryptionFlag) != 0)
             {
-                ExtractChunked(source, output, entry, useZstd: true);
-            }
-            else if ((entry.Flags & ChunkedGzipFlag) == ChunkedGzipFlag)
-            {
-                ExtractChunked(source, output, entry, useZstd: false);
-            }
-            else if ((entry.Flags & CompressionFlag) != 0)
-            {
-                using var gzip = new GZipStream(source, CompressionMode.Decompress, true);
-                gzip.CopyTo(output);
+                using var encrypted = new MemoryStream();
+                source.CopyTo(encrypted);
+                using var decrypted = new MemoryStream(
+                    DecryptAesPayload(encrypted.ToArray()), writable: false);
+                ExtractEntryPayload(decrypted, output, entry);
             }
             else
             {
-                source.CopyTo(output);
+                ExtractEntryPayload(source, output, entry);
             }
         }
 
@@ -239,10 +237,10 @@ public sealed class FgoFarcArchive : BinaryFile, IArchive
     /// <inheritdoc />
     System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
 
-    private static string ReadIndexString(EndianBinaryReader reader, uint indexSize)
+    private static string ReadIndexString(EndianBinaryReader reader)
     {
         var bytes = new List<byte>();
-        while (reader.Position < indexSize)
+        while (reader.Position < reader.Length)
         {
             byte value = reader.ReadByte();
             if (value == 0)
@@ -252,6 +250,75 @@ public sealed class FgoFarcArchive : BinaryFile, IArchive
         }
 
         throw new InvalidDataException("Unterminated FGO FArc entry name");
+    }
+
+    private void ReadEntries(EndianBinaryReader reader, uint entrySize, long archiveLength)
+    {
+        if (entrySize < 0x10)
+            throw new InvalidDataException($"Invalid FGO FArc entry size: 0x{entrySize:X}");
+
+        for (uint i = 0; i < EntryCount; i++)
+        {
+            // IndexSize is the game's LIMIT value. In v3 archives it can end
+            // before the final variable-length name/metadata record (the
+            // sel_global_properties archive is eight bytes past this value),
+            // so the entry count and stream bounds are the authoritative limits.
+            string name = ReadIndexString(reader);
+            uint offset = reader.ReadUInt32();
+            uint storedSize = reader.ReadUInt32();
+            uint uncompressedSize = reader.ReadUInt32();
+            uint flags = reader.ReadUInt32();
+
+            if (entrySize > 0x10)
+                reader.SeekCurrent(entrySize - 0x10);
+
+            if (string.IsNullOrEmpty(name))
+                throw new InvalidDataException($"FGO FArc entry {i} has an empty name");
+
+            if (offset > archiveLength || storedSize > archiveLength - offset)
+                throw new InvalidDataException($"FGO FArc entry '{name}' points outside the archive");
+
+            mEntries[name] = new Entry(name, offset, storedSize, uncompressedSize, flags);
+        }
+    }
+
+    private static byte[] DecryptIndex(byte[] encryptedIndex)
+        => DecryptAesPayload(encryptedIndex);
+
+    private static byte[] DecryptAesPayload(byte[] encryptedPayload)
+    {
+        if (encryptedPayload.Length < 0x20 || (encryptedPayload.Length - 0x10) % 16 != 0)
+            throw new InvalidDataException("Encrypted FGO FArc index has an invalid AES block length");
+
+        byte[] iv = encryptedPayload.AsSpan(0, 16).ToArray();
+        using var aes = Aes.Create();
+        aes.Key = FgoArchiveKey;
+        aes.IV = iv;
+        aes.Mode = CipherMode.CBC;
+        aes.Padding = PaddingMode.None;
+        using var decryptor = aes.CreateDecryptor();
+        return decryptor.TransformFinalBlock(encryptedPayload, 16, encryptedPayload.Length - 16);
+    }
+
+    private static void ExtractEntryPayload(Stream source, Stream destination, Entry entry)
+    {
+        if ((entry.Flags & ChunkedZstdFlag) == ChunkedZstdFlag)
+        {
+            ExtractChunked(source, destination, entry, useZstd: true);
+        }
+        else if ((entry.Flags & ChunkedGzipFlag) == ChunkedGzipFlag)
+        {
+            ExtractChunked(source, destination, entry, useZstd: false);
+        }
+        else if ((entry.Flags & CompressionFlag) != 0)
+        {
+            using var gzip = new GZipStream(source, CompressionMode.Decompress, true);
+            gzip.CopyTo(destination);
+        }
+        else
+        {
+            source.CopyTo(destination);
+        }
     }
 
     private sealed record Entry(string Name, uint Offset, uint StoredSize, uint UncompressedSize, uint Flags);

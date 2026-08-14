@@ -1,5 +1,6 @@
 ﻿using MikuMikuLibrary.Archives;
 using MikuMikuLibrary.IO;
+using MikuMikuLibrary.MasterTables;
 using MikuMikuModel.Modules;
 using MikuMikuModel.Nodes.IO;
 using MikuMikuModel.Resources;
@@ -65,11 +66,23 @@ public class FarcArchiveNode : BinaryFileNode<FarcArchive>
             if (module != null && typeof(IBinaryFile).IsAssignableFrom(module.ModelType) && NodeFactory.NodeTypes.ContainsKey(module.ModelType))
                 node = NodeFactory.Create(module.ModelType, fileName, new Func<Stream>(() => Data.Open(fileName, EntryStreamMode.MemoryStream)));
 
+            else if (IsFgoMasterTable(fileName))
+                node = NodeFactory.Create(typeof(FgoMasterTable), fileName, new Func<Stream>(() => Data.Open(fileName, EntryStreamMode.MemoryStream)));
+
             else
                 node = new StreamNode(fileName, Data.Open(fileName, EntryStreamMode.OriginalStream));
 
             Nodes.Add(node);
         }
+    }
+
+    private bool IsFgoMasterTable(string fileName)
+    {
+        if (Path.GetFileName(fileName).StartsWith("arms_mst_", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        using var stream = Data.Open(fileName, EntryStreamMode.OriginalStream);
+        return FgoMasterTable.IsTextTable(stream);
     }
 
     protected override void SynchronizeCore()

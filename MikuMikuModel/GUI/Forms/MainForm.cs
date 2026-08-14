@@ -14,6 +14,8 @@ using MikuMikuModel.Nodes;
 using MikuMikuModel.Nodes.Archives;
 using MikuMikuModel.Nodes.Collections;
 using MikuMikuModel.Nodes.IO;
+using MikuMikuModel.Nodes.MasterTables;
+using MikuMikuModel.Nodes.Selection;
 using MikuMikuModel.Nodes.TypeConverters;
 using MikuMikuModel.Nodes.Wrappers;
 using MikuMikuModel.Resources;
@@ -207,8 +209,10 @@ public partial class MainForm : Form
 
             treeNode.Expand();
 
-            if (node is FarcArchiveNode && node.Nodes.Count > 0)
+            if ((node is FarcArchiveNode || node is FgoFarcArchiveNode) && node.Nodes.Count > 0)
                 mNodeTreeView.SelectedNode = treeNode.Nodes[0] as NodeAsTreeNode;
+            else if (node is FgoSelSvtTableNode || node is FgoSelCommonTableNode || node is FgoMasterTableNode)
+                mNodeTreeView.SelectedNode = treeNode;
 
             mCurrentlyOpenFilePath = filePath;
             mSaveToolStripMenuItem.Enabled = node.Flags.HasFlag(NodeFlags.Export);

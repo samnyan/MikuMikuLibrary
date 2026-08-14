@@ -1,4 +1,6 @@
 ﻿using System.Reflection;
+using MikuMikuLibrary.IO;
+using MikuMikuLibrary.MasterTables;
 using MikuMikuModel.Configurations;
 using MikuMikuModel.Modules;
 
@@ -34,7 +36,15 @@ public static class NodeFactory
     {
         var module = ModuleImportUtilities.GetModule(filePath);
         if (module == null || !NodeTypes.ContainsKey(module.ModelType))
-            throw new InvalidDataException("File type could not be determined.");
+        {
+            using var stream = File.OpenRead(filePath);
+            if (!FgoMasterTable.IsTextTable(stream))
+                throw new InvalidDataException("File type could not be determined.");
+
+            ConfigurationList.Instance.DetermineCurrentConfiguration(filePath);
+            return Create(typeof(FgoMasterTable), Path.GetFileName(filePath),
+                BinaryFile.Load<FgoMasterTable>(filePath));
+        }
 
         ConfigurationList.Instance.DetermineCurrentConfiguration(filePath);
         return Create(module.ModelType, Path.GetFileName(filePath), module.Import(filePath));
