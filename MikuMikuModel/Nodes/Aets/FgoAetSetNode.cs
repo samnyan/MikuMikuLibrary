@@ -18,7 +18,7 @@ public sealed class FgoAetSetNode : BinaryFileNode<FgoAetSet>
     protected override void PopulateCore()
     {
         foreach (var record in Data.Records)
-            Nodes.Add(new FgoAetRecordNode($"{record.Index}: {record.Name}", record));
+            Nodes.Add(new FgoAetRecordNode($"{record.Index}: {record.Name}", record, Data));
     }
 
     protected override void SynchronizeCore()
@@ -36,6 +36,7 @@ public sealed class FgoAetSetNode : BinaryFileNode<FgoAetSet>
 
 public sealed class FgoAetRecordNode : Node<FgoAetRecord>
 {
+    private readonly FgoAetSet mSet;
     // Flags is queried by Node<T>'s constructor while it assigns Name.  It
     // must not access Data there, otherwise Data -> Synchronize -> Flags
     // recurses before construction has completed.  Empty records simply
@@ -95,14 +96,34 @@ public sealed class FgoAetRecordNode : Node<FgoAetRecord>
     {
     }
 
-    public FgoAetRecordNode(string name, FgoAetRecord data) : base(name, data)
+    public FgoAetRecordNode(string name, FgoAetRecord data, FgoAetSet set) : base(name, data)
     {
+        mSet = set ?? throw new ArgumentNullException(nameof(set));
+    }
+
+    public override Control Control => Data.Type == FgoAetRecordType.Scene
+        ? GetScenePreview()
+        : base.Control;
+
+    private Control GetScenePreview()
+    {
+        AetScenePreviewControl.Instance.SetScene(mSet, Data);
+        return AetScenePreviewControl.Instance;
     }
 }
 
 public sealed class FgoAetChildNode : Node<FgoAetChild>
 {
     public override NodeFlags Flags => NodeFlags.None;
+
+    private FgoSpriteResolution Resolution =>
+        AetResourceContext.Instance.Resolve(Data.Name);
+
+    public override Bitmap Image => IsSprite
+        ? ResourceStore.LoadBitmap("Icons/Texture.png")
+        : base.Image;
+
+    private bool IsSprite => Data.Name.EndsWith(".pic", StringComparison.OrdinalIgnoreCase);
 
     [Category("Layer")]
     public string PropertyName => Data.PropertyName;
@@ -131,6 +152,18 @@ public sealed class FgoAetChildNode : Node<FgoAetChild>
     [Category("Layer")]
     public int NestedOffset => Data.NestedOffset;
 
+    [Category("Asset")]
+    public string ResourceStatus => !IsSprite ? string.Empty : Resolution == null ? "Not found" : "Resolved";
+
+    [Category("Asset")]
+    public string ResourcePackage => IsSprite ? Resolution?.Package.Name ?? string.Empty : string.Empty;
+
+    [Category("Asset")]
+    public string ResourcePath => IsSprite ? Resolution?.Package.ArchivePath ?? string.Empty : string.Empty;
+
+    [Category("Asset")]
+    public string ResourceSprite => IsSprite ? Resolution?.Entry.Name ?? string.Empty : string.Empty;
+
     protected override void Initialize()
     {
     }
@@ -143,6 +176,18 @@ public sealed class FgoAetChildNode : Node<FgoAetChild>
     {
     }
 
+    public override Control Control
+    {
+        get
+        {
+            if (!IsSprite)
+                return base.Control;
+
+            AetAssetPreviewControl.Instance.SetSprite(Data.Name, Resolution);
+            return AetAssetPreviewControl.Instance;
+        }
+    }
+
     public FgoAetChildNode(string name, FgoAetChild data) : base(name, data)
     {
     }
@@ -151,6 +196,8 @@ public sealed class FgoAetChildNode : Node<FgoAetChild>
 public sealed class FgoAetSourceNode : Node<FgoAetSource>
 {
     public override NodeFlags Flags => NodeFlags.None;
+
+    public override Bitmap Image => ResourceStore.LoadBitmap("Icons/Texture.png");
 
     private FgoSpriteResolution Resolution =>
         AetResourceContext.Instance.Resolve(Data.Path, Data.Name);

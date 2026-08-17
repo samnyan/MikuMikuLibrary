@@ -7,6 +7,7 @@ namespace MikuMikuLibrary.Aets.Resources;
 /// <summary>A lazily loaded FGO Sprite table and its optional texture archive.</summary>
 public sealed class FgoSpritePackage : IDisposable
 {
+    private readonly object mTextureSetLock = new();
     private TextureSet mTextureSet;
 
     /// <summary>Gets the package name, without its file extension.</summary>
@@ -54,19 +55,22 @@ public sealed class FgoSpritePackage : IDisposable
     /// <returns>The decoded TXP3 texture set.</returns>
     public TextureSet LoadTextureSet()
     {
-        if (mTextureSet != null)
+        lock (mTextureSetLock)
+        {
+            if (mTextureSet != null)
+                return mTextureSet;
+
+            if (string.IsNullOrEmpty(ArchivePath) || !File.Exists(ArchivePath))
+                throw new FileNotFoundException("FGO Sprite texture archive was not found.", ArchivePath);
+
+            using var archive = BinaryFile.Load<FgoFarcArchive>(ArchivePath);
+            if (!archive.Contains("texture.bin"))
+                throw new InvalidDataException($"FGO Sprite archive '{ArchivePath}' has no texture.bin entry.");
+
+            using var stream = archive.Open("texture.bin", EntryStreamMode.MemoryStream);
+            mTextureSet = BinaryFile.Load<TextureSet>(stream, leaveOpen: false);
             return mTextureSet;
-
-        if (string.IsNullOrEmpty(ArchivePath) || !File.Exists(ArchivePath))
-            throw new FileNotFoundException("FGO Sprite texture archive was not found.", ArchivePath);
-
-        using var archive = BinaryFile.Load<FgoFarcArchive>(ArchivePath);
-        if (!archive.Contains("texture.bin"))
-            throw new InvalidDataException($"FGO Sprite archive '{ArchivePath}' has no texture.bin entry.");
-
-        using var stream = archive.Open("texture.bin", EntryStreamMode.MemoryStream);
-        mTextureSet = BinaryFile.Load<TextureSet>(stream, leaveOpen: false);
-        return mTextureSet;
+        }
     }
 
     /// <summary>Gets the texture referenced by a Sprite entry.</summary>
@@ -87,8 +91,11 @@ public sealed class FgoSpritePackage : IDisposable
     /// <inheritdoc />
     public void Dispose()
     {
-        mTextureSet?.Dispose();
-        mTextureSet = null;
+        lock (mTextureSetLock)
+        {
+            mTextureSet?.Dispose();
+            mTextureSet = null;
+        }
     }
 }
 

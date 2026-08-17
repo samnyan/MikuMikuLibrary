@@ -279,6 +279,19 @@ public sealed class FgoAetChild
     public float Value2 { get; internal set; }
     public float Value3 { get; internal set; }
     public int NestedOffset { get; internal set; }
+
+    /// <summary>Gets the static X coordinate used by the FGO runtime.</summary>
+    /// <remarks>The exported value is stored in the field historically named opacity.</remarks>
+    public float StaticPositionX => Opacity;
+
+    /// <summary>Gets the static Y coordinate used by the FGO runtime.</summary>
+    public float StaticPositionY => Opacity + Scale;
+
+    /// <summary>Gets the static Z/depth coordinate used by the FGO runtime.</summary>
+    public float StaticPositionZ => Position;
+
+    /// <summary>Gets the static uniform scale used by the FGO runtime.</summary>
+    public float StaticScale => Math.Abs(Rotation) < float.Epsilon ? 1.0f : 1.0f / Rotation;
 }
 
 public sealed class FgoAetSource

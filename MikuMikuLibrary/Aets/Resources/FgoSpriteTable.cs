@@ -37,7 +37,11 @@ public sealed class FgoSpriteTable : BinaryFile
     /// <summary>Gets all sprite entries in table order.</summary>
     public IReadOnlyList<FgoSpriteEntry> Entries { get; private set; }
 
-    /// <summary>Gets the atlas names in the order used by <c>texture.bin</c>.</summary>
+    /// <summary>
+    /// Gets the atlas names in the order used by <c>texture.bin</c>.
+    /// FGO stores these names only in the Sprite table and sorts them by an
+    /// ordinal resource-name comparison when building the texture set.
+    /// </summary>
     public IReadOnlyList<string> TextureNames { get; private set; }
 
     /// <summary>Loads an FGO Sprite table from a stream.</summary>
@@ -100,7 +104,7 @@ public sealed class FgoSpriteTable : BinaryFile
 
         var entries = new List<FgoSpriteEntry>(recordCount);
         var textureNames = new List<string>();
-        var textureIndices = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var textureNameSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         int offset = HeaderSize;
 
         for (int index = 0; index < recordCount; index++)
@@ -115,10 +119,8 @@ public sealed class FgoSpriteTable : BinaryFile
             uint x1 = ReadUInt32(data, ref offset);
             uint y1 = ReadUInt32(data, ref offset);
 
-            if (!textureIndices.TryGetValue(textureName, out int textureIndex))
+            if (textureNameSet.Add(textureName))
             {
-                textureIndex = textureNames.Count;
-                textureIndices.Add(textureName, textureIndex);
                 textureNames.Add(textureName);
             }
 
@@ -133,7 +135,7 @@ public sealed class FgoSpriteTable : BinaryFile
                 index,
                 spriteName,
                 textureName,
-                textureIndex,
+                0,
                 atlasWidth,
                 atlasHeight,
                 x0,
@@ -147,7 +149,35 @@ public sealed class FgoSpriteTable : BinaryFile
             throw new InvalidDataException(
                 $"FGO Sprite table has {data.Length - offset} trailing bytes after {recordCount} records.");
 
-        return new FgoSpriteTable(entries, textureNames);
+        // texture.bin does not carry the source names. FGO's build pipeline
+        // writes its texture set in resource-name order, while Sprite records
+        // are emitted in UI/resource order. Numbering textures by first table
+        // occurrence therefore points at the wrong atlas whenever those two
+        // orders differ (for example gam_result_merge_bc7_013). Keep the
+        // display names in the same order as texture.bin and remap every entry
+        // to that stable order. IDA shows the game sorting the sprite resource
+        // file names with an exact byte/string comparison, so use ordinal
+        // ordering here rather than culture-sensitive or numeric sorting.
+        var orderedTextureNames = textureNames
+            .OrderBy(name => name, StringComparer.Ordinal)
+            .ToList();
+        var orderedTextureIndices = orderedTextureNames
+            .Select((name, index) => (name, index))
+            .ToDictionary(x => x.name, x => x.index, StringComparer.OrdinalIgnoreCase);
+        var orderedEntries = entries.Select(entry => new FgoSpriteEntry(
+            entry.Index,
+            entry.Name,
+            entry.TextureName,
+            orderedTextureIndices[entry.TextureName],
+            entry.AtlasWidth,
+            entry.AtlasHeight,
+            entry.X0,
+            entry.Y0,
+            entry.X1,
+            entry.Y1,
+            entry.ResourceIndex)).ToList();
+
+        return new FgoSpriteTable(orderedEntries, orderedTextureNames);
     }
 
     private static uint ReadUInt32(byte[] data, ref int offset)
@@ -204,7 +234,7 @@ public sealed class FgoSpriteEntry
     /// <summary>Gets the logical atlas name.</summary>
     public string TextureName { get; }
 
-    /// <summary>Gets the zero-based texture index in <c>texture.bin</c>.</summary>
+    /// <summary>Gets the zero-based texture index in the name-sorted <c>texture.bin</c>.</summary>
     public int TextureIndex { get; }
 
     /// <summary>Gets the atlas width recorded by the game.</summary>
