@@ -1,4 +1,3 @@
-﻿using System.Net.Http;
 using System.Threading;
 using MikuMikuLibrary.Hashes;
 using MikuMikuLibrary.IO;
@@ -679,66 +678,15 @@ public partial class MainForm : Form
             { UseShellExecute = true });
     }
 
-    private async void CheckForUpdates(bool notifyOnFail)
+    private void CheckForUpdates()
     {
-#if DEBUG
-        return;
-#endif
-
-        try
-        {
-            using (var client = new HttpClient())
-            {
-                client.DefaultRequestHeaders.Add("user-agent", Program.Name);
-                var response = await client.GetAsync("https://api.github.com/repos/blueskythlikesclouds/MikuMikuLibrary/releases/latest");
-                var content = await response.Content.ReadAsStringAsync();
-
-                // yes this is pure crackheadery
-                // no I won't use a json library
-
-                int index = content.IndexOf("tag_name", StringComparison.OrdinalIgnoreCase);
-
-                int firstIndex = content.IndexOf(':', index + 8);
-                int lastIndex = content.IndexOf(',', firstIndex + 1);
-
-                string tagName = Program.FixUpVersionString(content.Substring(firstIndex + 1, lastIndex - firstIndex - 1).Trim('"', ',', 'v', ' '));
-
-                if (tagName != Program.Version)
-                {
-                    Invoke(() =>
-                    {
-                        if (MessageBox.Show("There's an update available! Do you want to go to the releases page?", Program.Name,
-                                MessageBoxButtons.YesNo,
-                                MessageBoxIcon.Question) != DialogResult.Yes)
-                            return;
-
-                        Process.Start(new ProcessStartInfo("https://github.com/blueskythlikesclouds/MikuMikuLibrary/releases")
-                            { UseShellExecute = true });
-                    });
-                }
-                
-                else if (notifyOnFail)
-                {
-                    Invoke(() =>
-                    {
-                        MessageBox.Show("There are no updates available.", Program.Name, MessageBoxButtons.OK, MessageBoxIcon.Information);
-                    });
-                }
-            }
-        }
-
-        catch
-        {
-            if (!notifyOnFail)
-                return;
-
-            Invoke(() => { MessageBox.Show("Failed to check for updates.", Program.Name, MessageBoxButtons.OK, MessageBoxIcon.Error); });
-        }
+        // This fork does not track upstream releases. Keep the command as a no-op
+        // so older menu wiring cannot accidentally contact the upstream API.
     }
 
     private void OnCheckForUpdates(object sender, EventArgs e)
     {
-        CheckForUpdates(true);
+        CheckForUpdates();
     }
 
     private void OnAbout(object sender, EventArgs e)
@@ -935,10 +883,11 @@ public partial class MainForm : Form
         ModelViewControl.UseOrbitCamera = ValueCache.Get("UseOrbitCamera", true);
         UpdateCameraModeFlags();
 
-        mAutoCheckUpdatesToolStripMenuItem.Checked = ValueCache.Get("AutoCheckUpdates", true);
-
-        if (mAutoCheckUpdatesToolStripMenuItem.Checked)
-            new Thread(() => CheckForUpdates(false)).Start();
+        // Update checks target the upstream project and are intentionally disabled
+        // for this fork. Keep the legacy menu entries visible but inactive.
+        mAutoCheckUpdatesToolStripMenuItem.Checked = false;
+        mAutoCheckUpdatesToolStripMenuItem.Enabled = false;
+        mCheckForUpdatesToolStripMenuItem.Enabled = false;
 
         SetStyle(ControlStyles.DoubleBuffer, true);
 
