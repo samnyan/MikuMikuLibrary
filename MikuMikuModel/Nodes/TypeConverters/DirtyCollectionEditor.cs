@@ -34,7 +34,7 @@ public class DirtyCollectionEditor : CollectionEditor
             form.Tag = node;
         }
 
-        form.Closed += OnClosed;
+        form.FormClosed += OnClosed;
 
         return form;
     }

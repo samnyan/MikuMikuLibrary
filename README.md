@@ -1,6 +1,9 @@
-# Miku Miku Library
+# Miku Miku Library (Ver.FGOAC)
 
 Format library and file editor for Hatsune Miku: Project DIVA games.
+
+This version also includes read-only FATE/Grand Order Arcade support for FARc
+archives, AET set files, Sprite tables, and atlas-backed Sprite previews.
 
 # Building
 
@@ -11,10 +14,24 @@ Format library and file editor for Hatsune Miku: Project DIVA games.
 
 1. Clone the repository with the `--recursive` option. `git clone --recursive https://github.com/blueskythlikesclouds/MikuMikuLibrary.git`
 2. Install FBX SDK. (See instructions [here.](https://github.com/blueskythlikesclouds/MikuMikuLibrary/tree/master/MikuMikuLibrary.Native/Dependencies/FBX))
-3. Install the .NET SDK/.NET 7.0 Runtime through Visual Studio Installer.
-4. Open the solution in Visual Studio 2022.
+3. Install the .NET 10 SDK/Runtime through Visual Studio Installer.
+4. Open the solution in a Visual Studio version that supports .NET 10 and C++/CLI.
 5. Restore the missing NuGet packages.
 6. Build the solution.
+
+For a complete publish build, open a Visual Studio 2026 Developer Command
+Prompt and run `publish.bat`. It builds the native decoder and publishes the
+CLI tools and GUI for x86/x64. The native project still requires the
+DirectXTex submodule and the FBX SDK described above.
+
+The native project is a Visual C++/CLI project, so `dotnet restore` on the full
+solution may emit `NU1503` for the `.vcxproj`. That warning is expected; use
+`publish.bat` (or Visual Studio/MSBuild) for the native project and use
+`dotnet restore` only on the managed projects.
+
+If the native DLL is built elsewhere, set `MIKUMIKULIBRARY_NATIVE_PATH` to the
+DLL itself (or its containing directory) before launching MikuMikuModel.
+
 
 # Projects
 
@@ -52,8 +69,8 @@ A program that allows you to extract or create FARC files. MM+ CPK files are als
 The extractor auto-detects FATE/Grand Order Arcade `FARc` archives and uses
 `FgoFarcArchive`. DIVA `FArC` archives continue to use `FarcArchive`. FGO
 gzip/raw and chunked Zstandard entries can be extracted directly; encrypted
-entries still require the title-specific decoder described in the Aqua
-workspace's `docs/FATE_FGO_Arcade_SDEJ_10/RE/fgo_farc_quickbms_interop_notes.md`.
+encrypted entries still require a title-specific decoder and are not exposed
+by the generic extractor.
 
 # Special thanks
 

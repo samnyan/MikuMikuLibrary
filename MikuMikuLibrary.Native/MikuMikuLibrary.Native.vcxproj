@@ -359,7 +359,7 @@
     <RootNamespace>MikuMikuLibraryNative</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
     <CLRSupport>NetCore</CLRSupport>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
@@ -446,7 +446,7 @@
       <AdditionalDependencies>DirectXTex.lib;libfbxsdk-md.lib;libxml2-md.lib;zlib-md.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PreBuildEvent>
-      <Command>msbuild "$(ProjectDir)Dependencies\DirectXTex\DirectXTex\DirectXTex_Desktop_2022.vcxproj" -p:Configuration=$(Configuration) -p:Platform=$(Platform)</Command>
+      <Command>"$(MSBuildToolsPath)\MSBuild.exe" "$(ProjectDir)Dependencies\DirectXTex\DirectXTex\DirectXTex_Desktop_2022.vcxproj" -p:Configuration=$(Configuration) -p:Platform=$(Platform)</Command>
     </PreBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
@@ -477,7 +477,7 @@
     </Link>
     <PostBuildEvent />
     <PreBuildEvent>
-      <Command>msbuild "$(ProjectDir)Dependencies\DirectXTex\DirectXTex\DirectXTex_Desktop_2022.vcxproj" -p:Configuration=$(Configuration) -p:Platform=$(Platform)</Command>
+      <Command>"$(MSBuildToolsPath)\MSBuild.exe" "$(ProjectDir)Dependencies\DirectXTex\DirectXTex\DirectXTex_Desktop_2022.vcxproj" -p:Configuration=$(Configuration) -p:Platform=$(Platform)</Command>
     </PreBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
@@ -498,7 +498,7 @@
       <AdditionalDependencies>DirectXTex.lib;libfbxsdk-md.lib;libxml2-md.lib;zlib-md.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PreBuildEvent>
-      <Command>msbuild "$(ProjectDir)Dependencies\DirectXTex\DirectXTex\DirectXTex_Desktop_2022.vcxproj" -p:Configuration=$(Configuration) -p:Platform=$(Platform)</Command>
+      <Command>"$(MSBuildToolsPath)\MSBuild.exe" "$(ProjectDir)Dependencies\DirectXTex\DirectXTex\DirectXTex_Desktop_2022.vcxproj" -p:Configuration=$(Configuration) -p:Platform=$(Platform)</Command>
     </PreBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -528,7 +528,7 @@
       <LinkTimeCodeGeneration>Default</LinkTimeCodeGeneration>
     </Link>
     <PreBuildEvent>
-      <Command>msbuild "$(ProjectDir)Dependencies\DirectXTex\DirectXTex\DirectXTex_Desktop_2022.vcxproj" -p:Configuration=$(Configuration) -p:Platform=$(Platform)</Command>
+      <Command>"$(MSBuildToolsPath)\MSBuild.exe" "$(ProjectDir)Dependencies\DirectXTex\DirectXTex\DirectXTex_Desktop_2022.vcxproj" -p:Configuration=$(Configuration) -p:Platform=$(Platform)</Command>
     </PreBuildEvent>
   </ItemDefinitionGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

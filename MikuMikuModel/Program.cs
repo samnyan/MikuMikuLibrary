@@ -8,7 +8,7 @@ public static class Program
 {
     private static string sVersion;
 
-    public static string Name => "Miku Miku Model";
+    public static string Name => "Miku Miku Model (Ver.FGOAC)";
 
     public static string Version
     {
@@ -23,13 +23,10 @@ public static class Program
 
     public static string FixUpVersionString(string version)
     {
-        while (version.EndsWith(".0"))
-            version = version.Remove(version.Length - 2, 2);
+        while (version.EndsWith(".0", StringComparison.Ordinal))
+            version = version[..^2];
 
-        if (!version.Contains("."))
-            version += ".0";
-
-        return version;
+        return version.Contains('.', StringComparison.Ordinal) ? version : $"{version}.0";
     }
 
     /// <summary>
@@ -47,8 +44,8 @@ public static class Program
 
         using (var form = new MainForm())
         {
-            if (args.Length > 0 && File.Exists(args[0]))
-                form.OpenFile(args[0]);
+            if (args.Length > 0 && (File.Exists(args[0]) || Directory.Exists(args[0])))
+                form.OpenPath(args[0]);
 
             Application.Run(form);
         }

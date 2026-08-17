@@ -25,20 +25,34 @@ public static class Native
 
     static Native()
     {
-        string dllFilePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "runtimes",
-            $"win-x{(IntPtr.Size == 8 ? "64" : "86")}", "native", DLL_FILE_NAME);
+        string baseDirectory = AppDomain.CurrentDomain.BaseDirectory;
+        string architecture = IntPtr.Size == 8 ? "win-x64" : "win-x86";
+        string configuredPath = Environment.GetEnvironmentVariable("MIKUMIKULIBRARY_NATIVE_PATH");
 
-        // Unblock DLL when extracted through Windows (thanks Sewer)
+        var candidates = new List<string>();
+        if (!string.IsNullOrWhiteSpace(configuredPath))
+        {
+            candidates.Add(File.Exists(configuredPath)
+                ? configuredPath
+                : Path.Combine(configuredPath, DLL_FILE_NAME));
+        }
+
+        candidates.Add(Path.Combine(baseDirectory, "runtimes", architecture, "native", DLL_FILE_NAME));
+        candidates.Add(Path.Combine(baseDirectory, DLL_FILE_NAME));
+
+        string dllFilePath = candidates.FirstOrDefault(File.Exists);
+        if (dllFilePath == null)
+        {
+            string checkedPaths = string.Join(Environment.NewLine, candidates.Select(path => $"  - {path}"));
+            throw new FileNotFoundException(
+                $"Native MML library could not be found. Build MikuMikuLibrary.Native first, " +
+                $"or set MIKUMIKULIBRARY_NATIVE_PATH to its DLL or containing directory. " +
+                $"Checked paths:{Environment.NewLine}{checkedPaths}",
+                candidates[0]);
+        }
+
+        // Unblock DLL when extracted through Windows (thanks Sewer).
         DeleteFile(dllFilePath + ":Zone.Identifier");
-        
-        // Try root directory.
-        if (!File.Exists(dllFilePath))
-            dllFilePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, DLL_FILE_NAME);
-
-        DeleteFile(dllFilePath + ":Zone.Identifier");
-
-        if (!File.Exists(dllFilePath))
-            throw new FileNotFoundException("Native MML library could not be found", dllFilePath);
 
         var assembly = Assembly.LoadFile(dllFilePath);
 

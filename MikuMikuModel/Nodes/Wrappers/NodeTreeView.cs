@@ -1,5 +1,7 @@
 ﻿using MikuMikuModel.Nodes.Collections;
 
+using System.ComponentModel;
+
 namespace MikuMikuModel.Nodes.Wrappers;
 
 public class NodeTreeView : TreeView
@@ -16,6 +18,7 @@ public class NodeTreeView : TreeView
         }
     }
 
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     public new NodeAsTreeNode SelectedNode
     {
         get => base.SelectedNode as NodeAsTreeNode;

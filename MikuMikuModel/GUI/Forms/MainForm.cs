@@ -13,6 +13,7 @@ using MikuMikuModel.Modules;
 using MikuMikuModel.Nodes;
 using MikuMikuModel.Nodes.Archives;
 using MikuMikuModel.Nodes.Collections;
+using MikuMikuModel.Nodes.FileSystem;
 using MikuMikuModel.Nodes.IO;
 using MikuMikuModel.Nodes.MasterTables;
 using MikuMikuModel.Nodes.Selection;
@@ -27,6 +28,10 @@ namespace MikuMikuModel.GUI.Forms;
 public partial class MainForm : Form
 {
     private readonly StringBuilder mStringBuilder = new();
+    private readonly ToolStripMenuItem mSetAetResourceDirectoryToolStripMenuItem =
+        new("Set AET resource directory...");
+    private readonly ToolStripMenuItem mClearAetResourceDirectoryToolStripMenuItem =
+        new("Clear AET resource directory");
 
     private Control mControl;
 
@@ -43,7 +48,14 @@ public partial class MainForm : Form
 #endif
         if (!string.IsNullOrEmpty(mCurrentlyOpenFilePath))
         {
-            mStringBuilder.AppendFormat(" - {0}", Path.GetFileName(mCurrentlyOpenFilePath));
+            string displayName = mCurrentlyOpenFilePath.TrimEnd(
+                Path.DirectorySeparatorChar,
+                Path.AltDirectorySeparatorChar);
+            displayName = Path.GetFileName(displayName);
+            if (string.IsNullOrEmpty(displayName))
+                displayName = Path.GetPathRoot(mCurrentlyOpenFilePath) ?? mCurrentlyOpenFilePath;
+
+            mStringBuilder.AppendFormat(" - {0}", displayName);
 
             if (mNodeTreeView.RootDataNode.Flags.HasFlag(NodeFlags.Export) &&
                 mNodeTreeView.RootDataNode is IDirtyNode dirtyNode && dirtyNode.IsDirty)
@@ -54,6 +66,64 @@ public partial class MainForm : Form
             ConfigurationList.Instance.CurrentConfiguration?.Name ?? "No configuration");
 
         Text = mStringBuilder.ToString();
+    }
+
+    private void UpdateAetResourceMenu()
+    {
+        var context = AetResourceContext.Instance;
+        mSetAetResourceDirectoryToolStripMenuItem.Text = context.IsConfigured
+            ? $"Set AET resource directory... ({Path.GetFileName(context.RootPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))})"
+            : "Set AET resource directory...";
+        mClearAetResourceDirectoryToolStripMenuItem.Enabled = context.IsConfigured;
+    }
+
+    private void OnAetResourceContextChanged(object sender, EventArgs e)
+    {
+        UpdateAetResourceMenu();
+        RefreshNodeControls();
+    }
+
+    private void OnSetAetResourceDirectory(object sender, EventArgs e)
+    {
+        using var dialog = new VistaFolderBrowserDialog
+        {
+            Description = "Select the game root or sprite resource directory for AET previews.",
+            UseDescriptionForTitle = true
+        };
+
+        if (dialog.ShowDialog(this) != DialogResult.OK)
+            return;
+
+        Enabled = false;
+        Cursor = Cursors.WaitCursor;
+        try
+        {
+            AetResourceContext.Instance.SetRoot(dialog.SelectedPath);
+            var catalog = AetResourceContext.Instance.FgoSprites;
+            MessageBox.Show(
+                $"Indexed {catalog.Packages.Count} Sprite packages and {catalog.SpriteCount} Sprites.",
+                "AET resources",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+        }
+        catch (Exception exception)
+        {
+            MessageBox.Show(
+                $"Failed to scan AET resources.\nReason: {exception.Message}",
+                Program.Name,
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Error);
+        }
+        finally
+        {
+            Cursor = Cursors.Default;
+            Enabled = true;
+        }
+    }
+
+    private void OnClearAetResourceDirectory(object sender, EventArgs e)
+    {
+        AetResourceContext.Instance.Clear();
     }
 
     private void SetSplitContainerControl(Control control)
@@ -230,6 +300,65 @@ public partial class MainForm : Form
         }
     }
 
+    public void OpenPath(string path)
+    {
+        if (Directory.Exists(path))
+            OpenFolder(path);
+        else if (File.Exists(path))
+            OpenFile(path);
+    }
+
+    public void OpenFolder(string folderPath)
+    {
+        Enabled = false;
+
+        try
+        {
+            string fullPath = Path.GetFullPath(folderPath);
+            if (!Directory.Exists(fullPath))
+                return;
+
+            ConfigurationList.Instance.DetermineCurrentConfiguration(fullPath);
+            var node = new DirectoryNode(fullPath);
+
+            Reset();
+
+            // A game root opened through the folder browser is also the most
+            // useful default AET resource root. Scanning is best-effort so a
+            // normal non-FGO directory can still be browsed when it has no
+            // Sprite tables.
+            try
+            {
+                AetResourceContext.Instance.SetRoot(fullPath);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    $"Could not index AET resources in '{fullPath}': {exception.Message}");
+            }
+
+            SetSubscription(node);
+            node.Exported += OnNodeExported;
+
+            var treeNode = new NodeAsTreeNode(node);
+            mNodeTreeView.Nodes.Add(treeNode);
+            treeNode.Expand();
+            mNodeTreeView.SelectedNode = treeNode;
+
+            mCurrentlyOpenFilePath = fullPath;
+            mSaveToolStripMenuItem.Enabled = false;
+            mSaveAsToolStripMenuItem.Enabled = false;
+            mCloseToolStripMenuItem.Enabled = true;
+
+            FileHistory.Add(fullPath);
+            SetTitle();
+        }
+        finally
+        {
+            Enabled = true;
+        }
+    }
+
     public void OpenFile()
     {
         using (var dialog = new OpenFileDialog())
@@ -253,6 +382,18 @@ public partial class MainForm : Form
     private void OnOpen(object sender, EventArgs e)
     {
         OpenFile();
+    }
+
+    private void OnOpenFolder(object sender, EventArgs e)
+    {
+        using var dialog = new VistaFolderBrowserDialog
+        {
+            Description = "Select a game data root directory.",
+            UseDescriptionForTitle = true
+        };
+
+        if (dialog.ShowDialog(this) == DialogResult.OK)
+            OpenFolder(dialog.SelectedPath);
     }
 
     private bool SaveFileAs()
@@ -359,7 +500,7 @@ public partial class MainForm : Form
         if (!(sender is ToolStripMenuItem menuItem) || !(menuItem.Tag is string filePath))
             return;
 
-        OpenFile(filePath);
+        OpenPath(filePath);
     }
 
     private void OnNodeClose(object sender, EventArgs e)
@@ -809,7 +950,7 @@ public partial class MainForm : Form
         var filePaths = (string[])drgevent.Data.GetData(DataFormats.FileDrop, false);
 
         if (filePaths.Length >= 1 && !AskForSavingChanges())
-            OpenFile(filePaths[0]);
+            OpenPath(filePaths[0]);
 
         base.OnDragDrop(drgevent);
     }
@@ -881,6 +1022,8 @@ public partial class MainForm : Form
             mComponents?.Dispose();
             ModelViewControl.DisposeInstance();
             TextureViewControl.DisposeInstance();
+            AetResourceContext.Instance.Changed -= OnAetResourceContextChanged;
+            AetResourceContext.Instance.Dispose();
             StyleSet.StyleChanged -= OnStyleChanged;
         }
 
@@ -890,6 +1033,14 @@ public partial class MainForm : Form
     public MainForm()
     {
         InitializeComponent();
+
+        mSetAetResourceDirectoryToolStripMenuItem.Click += OnSetAetResourceDirectory;
+        mClearAetResourceDirectoryToolStripMenuItem.Click += OnClearAetResourceDirectory;
+        mToolsToolStripMenuItem.DropDownItems.Insert(0, new ToolStripSeparator());
+        mToolsToolStripMenuItem.DropDownItems.Insert(0, mClearAetResourceDirectoryToolStripMenuItem);
+        mToolsToolStripMenuItem.DropDownItems.Insert(0, mSetAetResourceDirectoryToolStripMenuItem);
+        AetResourceContext.Instance.Changed += OnAetResourceContextChanged;
+        UpdateAetResourceMenu();
 
         Icon = ResourceStore.LoadIcon("Icons/Application.ico");
 

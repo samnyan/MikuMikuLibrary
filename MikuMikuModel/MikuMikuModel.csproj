@@ -1,7 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <TargetFramework>net10.0-windows</TargetFramework>
     <OutputType>WinExe</OutputType>
 	<UseWindowsForms>true</UseWindowsForms>
 	<AllowUnsafeBlocks>True</AllowUnsafeBlocks>
@@ -119,16 +119,47 @@
   
   <Import Project="..\MikuMikuLibrary.Shared\MikuMikuLibrary.Shared.projitems" Label="Shared" />
   
-  <Target Name="PostBuild-AnyCPU" AfterTargets="Build" Condition="$(RuntimeIdentifier) == ''">
-    <Exec Command="set X86OutDir=$(OutDir)runtimes\win-x86\native&#xD;&#xA;set X64OutDir=$(OutDir)runtimes\win-x64\native&#xD;&#xA;&#xD;&#xA;set X86SrcA=..\MikuMikuLibrary.Native\bin\$(Configuration)\Win32\Ijwhost.dll&#xD;&#xA;set X86SrcB=..\MikuMikuLibrary.Native\bin\$(Configuration)\Win32\MikuMikuLibrary.Native.dll&#xD;&#xA;&#xD;&#xA;set X64SrcA=..\MikuMikuLibrary.Native\bin\$(Configuration)\x64\Ijwhost.dll&#xD;&#xA;set X64SrcB=..\MikuMikuLibrary.Native\bin\$(Configuration)\x64\MikuMikuLibrary.Native.dll&#xD;&#xA;&#xD;&#xA;if exist %25X86SrcA%25 copy %25X86SrcA%25 %25X86OutDir%25&#xD;&#xA;if exist %25X86SrcB%25 copy %25X86SrcB%25 %25X86OutDir%25&#xD;&#xA;&#xD;&#xA;if exist %25X64SrcA%25 copy %25X64SrcA%25 %25X64OutDir%25&#xD;&#xA;if exist %25X64SrcB%25 copy %25X64SrcB%25 %25X64OutDir%25" />
+  <PropertyGroup>
+    <NativeOutputRoot>$(MSBuildProjectDirectory)\..\MikuMikuLibrary.Native\bin\$(Configuration)</NativeOutputRoot>
+  </PropertyGroup>
+
+  <Target Name="PostBuild-AnyCPU" AfterTargets="Build" Condition="'$(RuntimeIdentifier)' == ''">
+    <MakeDir Directories="$(OutDir)runtimes\win-x86\native;$(OutDir)runtimes\win-x64\native" />
+    <Copy SourceFiles="$(NativeOutputRoot)\Win32\Ijwhost.dll"
+          DestinationFolder="$(OutDir)runtimes\win-x86\native"
+          SkipUnchangedFiles="true"
+          Condition="Exists('$(NativeOutputRoot)\Win32\Ijwhost.dll')" />
+    <Copy SourceFiles="$(NativeOutputRoot)\Win32\MikuMikuLibrary.Native.dll"
+          DestinationFolder="$(OutDir)runtimes\win-x86\native"
+          SkipUnchangedFiles="true"
+          Condition="Exists('$(NativeOutputRoot)\Win32\MikuMikuLibrary.Native.dll')" />
+    <Copy SourceFiles="$(NativeOutputRoot)\x64\Ijwhost.dll"
+          DestinationFolder="$(OutDir)runtimes\win-x64\native"
+          SkipUnchangedFiles="true"
+          Condition="Exists('$(NativeOutputRoot)\x64\Ijwhost.dll')" />
+    <Copy SourceFiles="$(NativeOutputRoot)\x64\MikuMikuLibrary.Native.dll"
+          DestinationFolder="$(OutDir)runtimes\win-x64\native"
+          SkipUnchangedFiles="true"
+          Condition="Exists('$(NativeOutputRoot)\x64\MikuMikuLibrary.Native.dll')" />
+    <Warning Code="MMM001"
+             Text="MikuMikuLibrary.Native.dll was not found. Build MikuMikuLibrary.Native before opening textures or set MIKUMIKULIBRARY_NATIVE_PATH at runtime."
+             Condition="!Exists('$(NativeOutputRoot)\Win32\MikuMikuLibrary.Native.dll') And !Exists('$(NativeOutputRoot)\x64\MikuMikuLibrary.Native.dll')" />
   </Target>
 
   <Target Name="PostPublish-X86" AfterTargets="Publish" Condition="'$(RuntimeIdentifier)' == 'win-x86'">
-    <Exec Command="copy ..\MikuMikuLibrary.Native\bin\$(Configuration)\Win32\Ijwhost.dll $(PublishDir)&#xD;&#xA;copy ..\MikuMikuLibrary.Native\bin\$(Configuration)\Win32\MikuMikuLibrary.Native.dll $(PublishDir)" />
+    <Error Text="MikuMikuLibrary.Native.dll is missing. Build MikuMikuLibrary.Native before publishing."
+           Condition="!Exists('$(NativeOutputRoot)\Win32\MikuMikuLibrary.Native.dll')" />
+    <Copy SourceFiles="$(NativeOutputRoot)\Win32\Ijwhost.dll;$(NativeOutputRoot)\Win32\MikuMikuLibrary.Native.dll"
+          DestinationFolder="$(PublishDir)"
+          SkipUnchangedFiles="true" />
   </Target>   
   
   <Target Name="PostPublish-X64" AfterTargets="Publish" Condition="'$(RuntimeIdentifier)' == 'win-x64'">
-    <Exec Command="copy ..\MikuMikuLibrary.Native\bin\$(Configuration)\x64\Ijwhost.dll $(PublishDir)&#xD;&#xA;copy ..\MikuMikuLibrary.Native\bin\$(Configuration)\x64\MikuMikuLibrary.Native.dll $(PublishDir)" />
+    <Error Text="MikuMikuLibrary.Native.dll is missing. Build MikuMikuLibrary.Native before publishing."
+           Condition="!Exists('$(NativeOutputRoot)\x64\MikuMikuLibrary.Native.dll')" />
+    <Copy SourceFiles="$(NativeOutputRoot)\x64\Ijwhost.dll;$(NativeOutputRoot)\x64\MikuMikuLibrary.Native.dll"
+          DestinationFolder="$(PublishDir)"
+          SkipUnchangedFiles="true" />
   </Target> 
   
 </Project>

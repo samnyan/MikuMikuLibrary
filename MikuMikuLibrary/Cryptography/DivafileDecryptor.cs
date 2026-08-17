@@ -26,7 +26,7 @@ public static class DivafileDecryptor
     public static void ReadHeader(Stream source, bool skipSignature, out uint encryptedSize, out uint unencryptedSize)
     {
         var header = new byte[skipSignature ? 8 : 16];
-        source.Read(header, 0, header.Length);
+        source.ReadExactly(header);
 
         if (!skipSignature)
         {

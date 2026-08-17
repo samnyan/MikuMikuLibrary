@@ -16,6 +16,7 @@
         private void InitializeComponent()
         {
             this.mStatusStrip = new System.Windows.Forms.StatusStrip();
+            this.mFlipCheckBox = new System.Windows.Forms.CheckBox();
             this.mFormatLabel = new System.Windows.Forms.ToolStripStatusLabel();
             this.mSizeLabel = new System.Windows.Forms.ToolStripStatusLabel();
             this.mMipMapLabel = new System.Windows.Forms.ToolStripStatusLabel();
@@ -36,6 +37,19 @@
             this.mStatusStrip.SizingGrip = false;
             this.mStatusStrip.TabIndex = 0;
             this.mStatusStrip.Text = "statusStrip1";
+            //
+            // mFlipCheckBox
+            //
+            this.mFlipCheckBox.AutoSize = true;
+            this.mFlipCheckBox.Dock = System.Windows.Forms.DockStyle.Bottom;
+            this.mFlipCheckBox.Height = 22;
+            this.mFlipCheckBox.Margin = new System.Windows.Forms.Padding(4, 0, 4, 0);
+            this.mFlipCheckBox.Name = "mFlipCheckBox";
+            this.mFlipCheckBox.Padding = new System.Windows.Forms.Padding(4, 0, 0, 0);
+            this.mFlipCheckBox.TabIndex = 1;
+            this.mFlipCheckBox.Text = "Flip";
+            this.mFlipCheckBox.UseVisualStyleBackColor = true;
+            this.mFlipCheckBox.CheckedChanged += new System.EventHandler(this.OnFlipCheckedChanged);
             // 
             // mFormatLabel
             // 
@@ -69,6 +83,7 @@
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 13F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
+            this.Controls.Add(this.mFlipCheckBox);
             this.Controls.Add(this.mStatusStrip);
             this.DoubleBuffered = true;
             this.Name = "TextureViewControl";
@@ -83,6 +98,7 @@
         #endregion
 
         private System.Windows.Forms.StatusStrip mStatusStrip;
+        private System.Windows.Forms.CheckBox mFlipCheckBox;
         private System.Windows.Forms.ToolStripStatusLabel mFormatLabel;
         private System.Windows.Forms.ToolStripStatusLabel mSizeLabel;
         private System.Windows.Forms.ToolStripStatusLabel mMipMapLabel;

@@ -23,6 +23,7 @@
             this.mMenuStrip = new System.Windows.Forms.MenuStrip();
             this.mFileToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
             this.mOpenToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
+            this.mOpenFolderToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
             this.mOpenRecentToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
             this.mSaveToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
             this.mSaveAsToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
@@ -157,6 +158,7 @@
             // 
             this.mFileToolStripMenuItem.DropDownItems.AddRange(new System.Windows.Forms.ToolStripItem[] {
             this.mOpenToolStripMenuItem,
+            this.mOpenFolderToolStripMenuItem,
             this.mOpenRecentToolStripMenuItem,
             this.mSaveToolStripMenuItem,
             this.mSaveAsToolStripMenuItem,
@@ -175,6 +177,14 @@
             this.mOpenToolStripMenuItem.Size = new System.Drawing.Size(186, 22);
             this.mOpenToolStripMenuItem.Text = "Open";
             this.mOpenToolStripMenuItem.Click += new System.EventHandler(this.OnOpen);
+            //
+            // mOpenFolderToolStripMenuItem
+            //
+            this.mOpenFolderToolStripMenuItem.Name = "mOpenFolderToolStripMenuItem";
+            this.mOpenFolderToolStripMenuItem.ShortcutKeys = ((System.Windows.Forms.Keys)((System.Windows.Forms.Keys.Control | System.Windows.Forms.Keys.Shift) | System.Windows.Forms.Keys.O));
+            this.mOpenFolderToolStripMenuItem.Size = new System.Drawing.Size(186, 22);
+            this.mOpenFolderToolStripMenuItem.Text = "Open Folder";
+            this.mOpenFolderToolStripMenuItem.Click += new System.EventHandler(this.OnOpenFolder);
             // 
             // mOpenRecentToolStripMenuItem
             // 
@@ -506,6 +516,7 @@
         private System.Windows.Forms.SplitContainer mRightSplitContainer;
         private System.Windows.Forms.ToolStripMenuItem mFileToolStripMenuItem;
         private System.Windows.Forms.ToolStripMenuItem mOpenToolStripMenuItem;
+        private System.Windows.Forms.ToolStripMenuItem mOpenFolderToolStripMenuItem;
         private System.Windows.Forms.ToolStripMenuItem mSaveToolStripMenuItem;
         private System.Windows.Forms.ToolStripMenuItem mSaveAsToolStripMenuItem;
         private System.Windows.Forms.ToolStripSeparator mToolStripSeparator2;

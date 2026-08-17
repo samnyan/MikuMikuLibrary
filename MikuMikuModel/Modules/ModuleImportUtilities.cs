@@ -11,17 +11,22 @@ public static class ModuleImportUtilities
             x.Extensions.Where(y => y.Flags.HasFlag(FormatExtensionFlags.Import))
                 .Any(y => y.Extension == "*" || y.Extension.Equals(extension, StringComparison.OrdinalIgnoreCase))).ToList();
 
+        // Do not skip signature probing when filename matching leaves a
+        // single candidate. Several game formats share the .bin extension;
+        // for example, FGO AET, Sprite tables and texture payloads all do.
+        // The old early return caused any unknown .bin entry to be parsed as
+        // the first filename-compatible module.
         if (moduleList.Count > 1)
             moduleList.RemoveAll(
-                x => x.Extensions.Any(y => y.Flags.HasFlag(FormatExtensionFlags.Import) && y.Extension == "*") || !x.Match(fileName));
-
-        if (moduleList.Count <= 1)
-            return moduleList.Count == 0 ? null : moduleList[0];
+                x => x.Extensions.Any(y => y.Flags.HasFlag(FormatExtensionFlags.Import) && y.Extension == "*") ||
+                     !x.Match(fileName));
+        if (moduleList.Count == 0)
+            return null;
 
         var buffer = new byte[16];
 
         using (var stream = streamGetter())
-            stream.Read(buffer, 0, 16);
+            _ = stream.Read(buffer.AsSpan());
 
         moduleList.RemoveAll(x => !x.Match(buffer));
         return moduleList.Count != 1 ? null : moduleList[0];

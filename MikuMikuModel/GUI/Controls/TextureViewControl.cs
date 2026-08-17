@@ -1,4 +1,5 @@
 ﻿using MikuMikuLibrary.Textures;
+using System.ComponentModel;
 using MikuMikuLibrary.Textures.Processing;
 using MikuMikuModel.Resources.Styles;
 
@@ -16,6 +17,7 @@ public partial class TextureViewControl : UserControl
 
     public static TextureViewControl Instance => sInstance ??= new TextureViewControl();
 
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     public int CurrentMipMapIndex
     {
         get => mMipMapIndex;
@@ -34,6 +36,7 @@ public partial class TextureViewControl : UserControl
         }
     }
 
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     public int CurrentLevelIndex
     {
         get => mArrayIndex;
@@ -88,6 +91,9 @@ public partial class TextureViewControl : UserControl
 
     private void SetControlBackground()
     {
+        if (mTexture == null)
+            return;
+
         BackgroundImage = mTexture.IsYCbCr ? mYcbcrBitmap : mBitmaps[mArrayIndex, mMipMapIndex];
 
         BackgroundImageLayout = ClientSize.Width < BackgroundImage.Width || ClientSize.Height < BackgroundImage.Height
@@ -95,6 +101,24 @@ public partial class TextureViewControl : UserControl
             : ImageLayout.Center;
 
         Refresh();
+    }
+
+    private void OnFlipCheckedChanged(object sender, EventArgs eventArgs)
+    {
+        if (mTexture == null)
+            return;
+
+        if (mTexture.IsYCbCr)
+        {
+            mYcbcrBitmap?.RotateFlip(RotateFlipType.Rotate180FlipX);
+        }
+        else if (mBitmaps != null)
+        {
+            foreach (var bitmap in mBitmaps)
+                bitmap?.RotateFlip(RotateFlipType.Rotate180FlipX);
+        }
+
+        SetControlBackground();
     }
 
     private void SetAll()
@@ -120,6 +144,17 @@ public partial class TextureViewControl : UserControl
 
         else
             mBitmaps = TextureDecoder.DecodeToBitmaps(texture);
+
+        if (mFlipCheckBox.Checked)
+        {
+            if (texture.IsYCbCr)
+                mYcbcrBitmap?.RotateFlip(RotateFlipType.Rotate180FlipX);
+            else
+            {
+                foreach (var bitmap in mBitmaps)
+                    bitmap?.RotateFlip(RotateFlipType.Rotate180FlipX);
+            }
+        }
 
         mArrayIndex = 0;
         mMipMapIndex = 0;

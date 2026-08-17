@@ -39,7 +39,7 @@ public abstract class BinaryFile : IBinaryFile
 
             string ReadSignature()
             {
-                stream.Read(bytes, 0, bytes.Length);
+                stream.ReadExactly(bytes);
                 return Encoding.UTF8.GetString(bytes);
             }
 

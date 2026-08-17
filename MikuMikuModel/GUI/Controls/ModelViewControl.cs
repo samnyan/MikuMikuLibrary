@@ -1,4 +1,5 @@
 ﻿using MikuMikuLibrary.Geometry;
+using System.ComponentModel;
 using MikuMikuLibrary.Objects;
 using MikuMikuLibrary.Textures;
 using MikuMikuModel.GUI.Controls.ModelView;
@@ -106,30 +107,35 @@ public class ModelViewControl : GLControl
         sInstance?.Dispose();
     }
 
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     public Color GridInnerColor
     {
         get => mGridInnerColor.ToColor();
         set => mGridInnerColor = new Vector4(value.R, value.G, value.B, value.A) / 255.0f;
     }
 
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     public Color GridOuterColor
     {
         get => mGridOuterColor.ToColor();
         set => mGridOuterColor = new Vector4(value.R, value.G, value.B, value.A) / 255.0f;
     }
 
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     public Color GridXColor
     {
         get => mGridXColor.ToColor();
         set => mGridXColor = new Vector4(value.R, value.G, value.B, value.A) / 255.0f;
     }
 
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     public Color GridZColor
     {
         get => mGridZColor.ToColor();
         set => mGridZColor = new Vector4(value.R, value.G, value.B, value.A) / 255.0f;
     }
 
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     public Color BackgroundColor
     {
         get => mBackgroundColor.ToColor();

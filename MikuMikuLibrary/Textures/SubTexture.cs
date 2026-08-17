@@ -18,7 +18,11 @@ public class SubTexture
 
         Width = reader.ReadInt32();
         Height = reader.ReadInt32();
-        Format = (TextureFormat)reader.ReadInt32();
+        int format = reader.ReadInt32();
+        // FGO Arcade stores BC7 textures with its title-specific format IDs
+        // 130 and 131. Normalize them to the library's canonical BC7 value so
+        // the native decoder does not treat the data as an unknown format.
+        Format = format is 130 or 131 ? TextureFormat.BC7 : (TextureFormat)format;
         reader.SeekCurrent(4); // ID
 
         int dataSize = reader.ReadInt32();

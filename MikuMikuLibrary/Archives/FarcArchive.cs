@@ -508,7 +508,7 @@ public class FarcArchive : BinaryFile, IArchive
             if (IsFutureTone)
             {
                 var iv = new byte[16];
-                stream.Read(iv, 0, 16);
+                stream.ReadExactly(iv);
 
                 aes = CreateAesForFT(iv);
             }

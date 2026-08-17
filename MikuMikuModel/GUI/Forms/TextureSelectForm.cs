@@ -33,7 +33,7 @@ public partial class TextureSelectForm : Form
         mMainSplitContainer.Panel1.Controls.Add(control);
     }
 
-    protected override void OnClosing(CancelEventArgs e)
+    protected override void OnFormClosing(FormClosingEventArgs e)
     {
         if (DialogResult == DialogResult.OK && !(mNodeTreeView.SelectedNode?.Node is TextureNode))
         {
@@ -43,7 +43,7 @@ public partial class TextureSelectForm : Form
             e.Cancel = true;
         }
 
-        base.OnClosing(e);
+        base.OnFormClosing(e);
     }
 
     /// <summary>

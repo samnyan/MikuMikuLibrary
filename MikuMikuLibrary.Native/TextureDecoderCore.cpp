@@ -19,16 +19,8 @@ namespace MikuMikuLibrary::Textures::Processing
     Color8 DecodeRGB5(byte* pixel);
     Color8 DecodeRGB5A1(byte* pixel);
     Color8 DecodeRGBA4(byte* pixel);
-
-    const UncompressedFormatInfo FORMAT_INFOS[] =
-    {
-        { 2, DecodeA8 },
-        { 3, DecodeRGB8 },
-        { 4, DecodeRGBA8 },
-        { 2, DecodeRGB5 },
-        { 2, DecodeRGB5A1 },
-        { 2, DecodeRGBA4 },
-    };
+    Color8 DecodeL8(byte* pixel);
+    Color8 DecodeL8A8(byte* pixel);
 
     Color8 DecodeA8(byte* pixel)
     {
@@ -92,6 +84,41 @@ namespace MikuMikuLibrary::Textures::Processing
         a |= a << 4;
 
         return Color8(r, g, b, a);
+    }
+
+    Color8 DecodeL8(byte* pixel)
+    {
+        return Color8(pixel[0], pixel[0], pixel[0], 0xFF);
+    }
+
+    Color8 DecodeL8A8(byte* pixel)
+    {
+        return Color8(pixel[0], pixel[0], pixel[0], pixel[1]);
+    }
+
+    UncompressedFormatInfo GetUncompressedFormatInfo(const TextureFormat format)
+    {
+        switch (format)
+        {
+        case TextureFormat::A8:
+            return { 1, DecodeA8 };
+        case TextureFormat::RGB8:
+            return { 3, DecodeRGB8 };
+        case TextureFormat::RGBA8:
+            return { 4, DecodeRGBA8 };
+        case TextureFormat::RGB5:
+            return { 2, DecodeRGB5 };
+        case TextureFormat::RGB5A1:
+            return { 2, DecodeRGB5A1 };
+        case TextureFormat::RGBA4:
+            return { 2, DecodeRGBA4 };
+        case TextureFormat::L8:
+            return { 1, DecodeL8 };
+        case TextureFormat::L8A8:
+            return { 2, DecodeL8A8 };
+        default:
+            throw gcnew NotSupportedException(String::Format("Unsupported uncompressed texture format: {0}", (int) format));
+        }
     }
 
     void DecodeYCbCr(Texture^ texture, byte* destination, const size_t destinationLength)
@@ -158,7 +185,7 @@ namespace MikuMikuLibrary::Textures::Processing
 
         if (!TextureFormatUtilities::IsBlockCompressed(subTexture->Format))
         {
-            const UncompressedFormatInfo& info = FORMAT_INFOS[(int) subTexture->Format];
+            const UncompressedFormatInfo info = GetUncompressedFormatInfo(subTexture->Format);
 
             for (int i = 0; i < subTexture->Width; i++)
             {

@@ -14,7 +14,8 @@ public class TextureSetModule : FormatModule<TextureSet>
     public override bool Match(string fileName)
     {
         return fileName.EndsWith(".bin", StringComparison.OrdinalIgnoreCase)
-            ? fileName.EndsWith("_tex.bin", StringComparison.OrdinalIgnoreCase) // TODO: Should this check be done?
+            ? fileName.EndsWith("_tex.bin", StringComparison.OrdinalIgnoreCase) ||
+              fileName.Equals("texture.bin", StringComparison.OrdinalIgnoreCase)
             : base.Match(fileName);
     }
 

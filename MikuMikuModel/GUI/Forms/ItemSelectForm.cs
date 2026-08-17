@@ -1,4 +1,5 @@
 ﻿using MikuMikuModel.Resources;
+using System.ComponentModel;
 using MikuMikuModel.Resources.Styles;
 
 namespace MikuMikuModel.GUI.Forms;
@@ -8,18 +9,21 @@ public partial class ItemSelectForm<T> : Form
     public IEnumerable<T> CheckedItems =>
         from object checkedItem in mListView.CheckedItems select (T)((ListViewItem)checkedItem).Tag;
 
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     public string GroupBoxText
     {
         get => mGroupBox.Text;
         set => mGroupBox.Text = value;
     }
 
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     public bool CheckBoxChecked
     {
         get => mCheckBox.Checked;
         set => mCheckBox.Checked = value;
     }
 
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     public string CheckBoxText
     {
         get => mCheckBox.Text;
