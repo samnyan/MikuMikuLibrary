@@ -1,4 +1,5 @@
 using System.Drawing.Imaging;
+using System.Numerics;
 using MikuMikuLibrary.Aets.Resources;
 using MikuMikuLibrary.Textures.Processing;
 
@@ -68,7 +69,8 @@ public static class FgoSpriteBitmap
         return true;
     }
 
-    private static Rectangle GetCropRectangle(FgoSpriteEntry entry, int width, int height)
+    /// <summary>Gets the safe rectangle in a decoded, flipped atlas.</summary>
+    public static Rectangle GetCropRectangle(FgoSpriteEntry entry, int width, int height)
     {
         double sourceLeft = Math.Min(entry.X0, entry.X1);
         double sourceTop = Math.Min(entry.Y0, entry.Y1);
@@ -95,5 +97,27 @@ public static class FgoSpriteBitmap
         right = Math.Clamp(right, 0, width);
         bottom = Math.Clamp(bottom, 0, height);
         return Rectangle.FromLTRB(left, top, right, bottom);
+    }
+
+    /// <summary>
+    /// Converts a rectangle in the already-flipped bitmap's top-left coordinate
+    /// space to the UV range used by the OpenTK AET shader.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="DecodeAtlas"/> applies the FGO flip before this rectangle is
+    /// interpreted. The bitmap upload preserves row order, so the UV range must
+    /// use the rectangle's direct top/bottom values; applying a second vertical
+    /// inversion would sample a different Sprite from the atlas.
+    /// </remarks>
+    public static Vector4 GetUvRectangle(Rectangle rectangle, int width, int height)
+    {
+        if (width <= 0 || height <= 0)
+            throw new ArgumentOutOfRangeException(nameof(width));
+
+        return new Vector4(
+            rectangle.Left / (float)width,
+            rectangle.Top / (float)height,
+            rectangle.Right / (float)width,
+            rectangle.Bottom / (float)height);
     }
 }

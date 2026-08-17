@@ -85,6 +85,12 @@ public sealed class FgoSpriteTableEntryNode : Node<FgoSpriteEntry>
     public string ResourcePath => Resolution?.Package.ArchivePath ?? string.Empty;
 
     [Category("Resource")]
+    public string ResourceTablePath => Resolution?.Package.TablePath ?? string.Empty;
+
+    [Category("Resource")]
+    public int ResourceTableIndex => Resolution?.Entry.Index ?? -1;
+
+    [Category("Resource")]
     public string ResourceSprite => Resolution?.Entry.Name ?? string.Empty;
 
     protected override void Initialize()

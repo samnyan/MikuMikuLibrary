@@ -5,7 +5,7 @@
     <OutputType>Exe</OutputType>
     <SignAssembly>True</SignAssembly>
     <AssemblyOriginatorKeyFile>..\..\MikuMikuLibrary.snk</AssemblyOriginatorKeyFile>
-    <AssemblyVersion>2.2</AssemblyVersion>
+    <AssemblyVersion>0.1</AssemblyVersion>
   </PropertyGroup>
 
   <ItemGroup>

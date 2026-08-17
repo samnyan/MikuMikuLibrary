@@ -38,7 +38,7 @@ public sealed class FgoSpriteBitmapCache : IDisposable
 
         try
         {
-            var atlas = await lazy.Value.WaitAsync(cancellationToken).ConfigureAwait(false);
+            var atlas = await LoadAtlasAsync(resolution, cancellationToken).ConfigureAwait(false);
             if (atlas == null)
                 return null;
 
@@ -56,6 +56,35 @@ public sealed class FgoSpriteBitmapCache : IDisposable
         {
             // Do not retain failed archive/decoder tasks. A later selection may
             // succeed after a transient file or native decoder problem.
+            if (lazy.IsValueCreated && lazy.Value.IsCompleted &&
+                (lazy.Value.IsFaulted || lazy.Value.IsCanceled))
+                mAtlases.TryRemove(new KeyValuePair<string, Lazy<Task<Bitmap>>>(
+                    CreateKey(resolution), lazy));
+            throw;
+        }
+    }
+
+    /// <summary>Loads and retains the flipped atlas for GPU upload.</summary>
+    /// <param name="resolution">The resolved Sprite entry.</param>
+    /// <param name="cancellationToken">Cancels waiting for atlas decoding.</param>
+    /// <returns>The cache-owned decoded atlas bitmap.</returns>
+    public async Task<Bitmap> LoadAtlasAsync(FgoSpriteResolution resolution,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(resolution);
+        ThrowIfDisposed();
+
+        var lazy = mAtlases.GetOrAdd(CreateKey(resolution), _ =>
+            new Lazy<Task<Bitmap>>(
+                () => DecodeAtlasAsync(resolution),
+                LazyThreadSafetyMode.ExecutionAndPublication));
+
+        try
+        {
+            return await lazy.Value.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
             if (lazy.IsValueCreated && lazy.Value.IsCompleted &&
                 (lazy.Value.IsFaulted || lazy.Value.IsCanceled))
                 mAtlases.TryRemove(new KeyValuePair<string, Lazy<Task<Bitmap>>>(

@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using MikuMikuLibrary.Aets;
 using MikuMikuLibrary.Aets.Resources;
 using MikuMikuModel.GUI.Controls;
@@ -18,7 +19,16 @@ public sealed class FgoAetSetNode : BinaryFileNode<FgoAetSet>
     protected override void PopulateCore()
     {
         foreach (var record in Data.Records)
-            Nodes.Add(new FgoAetRecordNode($"{record.Index}: {record.Name}", record, Data));
+            Nodes.Add(new FgoAetRecordNode(FormatIndexedName(record.Index, record.Name), record, Data));
+    }
+
+    internal static string FormatIndexedName(int index, string name)
+    {
+        string prefix = $"{index}: ";
+        if (name != null && name.StartsWith(prefix, StringComparison.Ordinal))
+            name = name[prefix.Length..];
+
+        return $"{prefix}{name}";
     }
 
     protected override void SynchronizeCore()
@@ -65,6 +75,12 @@ public sealed class FgoAetRecordNode : Node<FgoAetRecord>
     public float Value1 => Data.Value1;
 
     [Category("AET")]
+    public float Duration => Data.Duration;
+
+    [Category("AET")]
+    public float FrameRate => Data.FrameRate;
+
+    [Category("AET")]
     public uint Color => Data.Color;
 
     [Category("AET")]
@@ -86,10 +102,12 @@ public sealed class FgoAetRecordNode : Node<FgoAetRecord>
     protected override void PopulateCore()
     {
         foreach (var child in Data.Children)
-            Nodes.Add(new FgoAetChildNode($"{child.Index}: {child.Name}", child));
+            Nodes.Add(new FgoAetChildNode(FgoAetSetNode.FormatIndexedName(child.Index, child.Name),
+                child, mSet, Data, Data));
 
         foreach (var source in Data.Sources)
-            Nodes.Add(new FgoAetSourceNode($"{source.Index}: {source.Name}", source));
+            Nodes.Add(new FgoAetSourceNode(FgoAetSetNode.FormatIndexedName(source.Index, source.Name),
+                source));
     }
 
     protected override void SynchronizeCore()
@@ -114,13 +132,36 @@ public sealed class FgoAetRecordNode : Node<FgoAetRecord>
 
 public sealed class FgoAetChildNode : Node<FgoAetChild>
 {
-    public override NodeFlags Flags => NodeFlags.None;
+    private readonly FgoAetSet mSet;
+    private readonly FgoAetRecord mScene;
+    private bool mIsComposition;
 
-    private FgoSpriteResolution Resolution =>
-        AetResourceContext.Instance.Resolve(Data.Name);
+    private FgoAetRecord LinkedRecord => mSet?.Records.FirstOrDefault(record =>
+        record.Index == (int)Data.Kind);
+
+    private bool IsComposition => mIsComposition;
+
+    public override NodeFlags Flags => IsComposition ? NodeFlags.Add : NodeFlags.None;
+
+    private FgoSpriteResolution Resolution
+    {
+        get
+        {
+            if (LinkedRecord?.Type == FgoAetRecordType.Asset && LinkedRecord.Sources.Count > 0)
+            {
+                // Match the same authoritative source used by scene rendering;
+                // do not resolve a duplicate layer label independently.
+                return AetResourceContext.Instance.Resolve(LinkedRecord.Sources[0]);
+            }
+
+            return AetResourceContext.Instance.Resolve(Data.Name);
+        }
+    }
 
     public override Bitmap Image => IsSprite
         ? ResourceStore.LoadBitmap("Icons/Texture.png")
+        : IsComposition
+            ? ResourceStore.LoadBitmap("Icons/Folder.png")
         : base.Image;
 
     private bool IsSprite => Data.Name.EndsWith(".pic", StringComparison.OrdinalIgnoreCase);
@@ -137,20 +178,53 @@ public sealed class FgoAetChildNode : Node<FgoAetChild>
     [Category("Layer")]
     public uint Kind => Data.Kind;
 
-    [Category("Layer")]
-    public float Opacity => Data.Opacity;
+    [Category("Timeline")]
+    public float StartTime => Data.LayerStartTime;
 
-    [Category("Layer")]
-    public float Scale => Data.Scale;
+    [Category("Timeline")]
+    public float Duration => Data.LayerDuration;
 
-    [Category("Layer")]
-    public float Position => Data.Position;
+    [Category("Timeline")]
+    public float OffsetTime => Data.LayerOffsetTime;
 
-    [Category("Layer")]
-    public float Rotation => Data.Rotation;
+    [Category("Timeline")]
+    public float TimeScale => Data.LayerTimeScale;
+
+    [Browsable(false)]
+    public float RawOpacity => Data.Opacity;
+
+    [Browsable(false)]
+    public float RawScale => Data.Scale;
+
+    [Browsable(false)]
+    public float RawPosition => Data.Position;
+
+    [Browsable(false)]
+    public float RawRotation => Data.Rotation;
 
     [Category("Layer")]
     public int NestedOffset => Data.NestedOffset;
+
+    [Category("Layer")]
+    public bool Visible
+    {
+        get => Data.IsVisible;
+        set
+        {
+            if (Data.IsVisible == value)
+                return;
+
+            Data.IsVisible = value;
+            OnPropertyChanged();
+            AetScenePreviewControl.Instance.RefreshVisibility();
+        }
+    }
+
+    [Category("Layer")]
+    public string LayerType => IsComposition ? "Composition" : IsSprite ? "Sprite asset" : "Layer";
+
+    [Category("Animation")]
+    public int PropertyCount => Data.Properties.Count;
 
     [Category("Asset")]
     public string ResourceStatus => !IsSprite ? string.Empty : Resolution == null ? "Not found" : "Resolved";
@@ -162,14 +236,39 @@ public sealed class FgoAetChildNode : Node<FgoAetChild>
     public string ResourcePath => IsSprite ? Resolution?.Package.ArchivePath ?? string.Empty : string.Empty;
 
     [Category("Asset")]
+    public string ResourceTablePath => IsSprite ? Resolution?.Package.TablePath ?? string.Empty : string.Empty;
+
+    [Category("Asset")]
+    public int ResourceTableIndex => IsSprite ? Resolution?.Entry.Index ?? -1 : -1;
+
+    [Category("Asset")]
     public string ResourceSprite => IsSprite ? Resolution?.Entry.Name ?? string.Empty : string.Empty;
+
+    [Category("Asset")]
+    public string ResourceTextureName => IsSprite ? Resolution?.Entry.TextureName ?? string.Empty : string.Empty;
+
+    [Category("Asset")]
+    public int ResourceTextureIndex => IsSprite ? Resolution?.Entry.TextureIndex ?? -1 : -1;
+
+    [Category("Asset")]
+    public string ResourceRectangle => !IsSprite || Resolution == null
+        ? string.Empty
+        : $"{Resolution.Entry.X0},{Resolution.Entry.Y0} - " +
+          $"{Resolution.Entry.X1},{Resolution.Entry.Y1}";
 
     protected override void Initialize()
     {
+        AddCustomHandler("Toggle visibility", () => Visible = !Visible);
     }
 
     protected override void PopulateCore()
     {
+        if (!IsComposition)
+            return;
+
+        foreach (var child in LinkedRecord.Children)
+            Nodes.Add(new FgoAetChildNode(FgoAetSetNode.FormatIndexedName(child.Index, child.Name), child, mSet,
+                LinkedRecord, mScene));
     }
 
     protected override void SynchronizeCore()
@@ -180,16 +279,34 @@ public sealed class FgoAetChildNode : Node<FgoAetChild>
     {
         get
         {
-            if (!IsSprite)
-                return base.Control;
+            // A layer/group remains part of its parent scene. Keep the scene
+            // preview active when the tree selection moves below the scene;
+            // only the selected layer changes in the canvas.
+            if (mScene != null)
+            {
+                var preview = AetScenePreviewControl.Instance;
+                preview.ShowScene(mSet, mScene, Data);
+                return preview;
+            }
 
-            AetAssetPreviewControl.Instance.SetSprite(Data.Name, Resolution);
-            return AetAssetPreviewControl.Instance;
+            if (IsSprite)
+            {
+                AetAssetPreviewControl.Instance.SetSprite(Data.Name, Resolution);
+                return AetAssetPreviewControl.Instance;
+            }
+
+            return base.Control;
         }
     }
 
-    public FgoAetChildNode(string name, FgoAetChild data) : base(name, data)
+    public FgoAetChildNode(string name, FgoAetChild data, FgoAetSet set, FgoAetRecord owner,
+        FgoAetRecord scene = null) : base(name, data)
     {
+        mSet = set ?? throw new ArgumentNullException(nameof(set));
+        ArgumentNullException.ThrowIfNull(owner);
+        mScene = scene ?? owner;
+        mIsComposition = set.Records.FirstOrDefault(record => record.Index == (int)data.Kind)?.Type ==
+                         FgoAetRecordType.Scene;
     }
 }
 
@@ -200,7 +317,7 @@ public sealed class FgoAetSourceNode : Node<FgoAetSource>
     public override Bitmap Image => ResourceStore.LoadBitmap("Icons/Texture.png");
 
     private FgoSpriteResolution Resolution =>
-        AetResourceContext.Instance.Resolve(Data.Path, Data.Name);
+        AetResourceContext.Instance.Resolve(Data);
 
     [Category("Asset")]
     public string Path => Data.Path;
@@ -216,6 +333,12 @@ public sealed class FgoAetSourceNode : Node<FgoAetSource>
 
     [Category("Asset")]
     public string ResourcePath => Resolution?.Package.ArchivePath ?? string.Empty;
+
+    [Category("Asset")]
+    public string ResourceTablePath => Resolution?.Package.TablePath ?? string.Empty;
+
+    [Category("Asset")]
+    public int ResourceTableIndex => Resolution?.Entry.Index ?? -1;
 
     [Category("Asset")]
     public int ResourceTextureIndex => Resolution?.Entry.TextureIndex ?? -1;

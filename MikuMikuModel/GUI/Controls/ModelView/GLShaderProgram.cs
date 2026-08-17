@@ -112,6 +112,16 @@ public class GLShaderProgram : IDisposable
         GL.AttachShader(shaderProgramId, vertexShader);
         GL.LinkProgram(shaderProgramId);
 
+        GL.GetProgram(shaderProgramId, GetProgramParameterName.LinkStatus, out int linkStatus);
+        if (linkStatus == 0)
+        {
+            Debug.WriteLine($"Shader link failed for {shaderName}: {GL.GetProgramInfoLog(shaderProgramId)}");
+            GL.DeleteShader(fragmentShader);
+            GL.DeleteShader(vertexShader);
+            GL.DeleteProgram(shaderProgramId);
+            return null;
+        }
+
         GL.DeleteShader(fragmentShader);
         GL.DeleteShader(vertexShader);
 

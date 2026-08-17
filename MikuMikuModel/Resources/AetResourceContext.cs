@@ -1,3 +1,4 @@
+using MikuMikuLibrary.Aets;
 using MikuMikuLibrary.Aets.Resources;
 
 namespace MikuMikuModel.Resources;
@@ -58,6 +59,15 @@ public sealed class AetResourceContext : IDisposable
             return null;
 
         return FgoSprites.Resolve(path) ?? FgoSprites.Resolve(name);
+    }
+
+    /// <summary>Resolves the source reference used by an FGO AET asset record.</summary>
+    /// <param name="source">The parsed AET source entry.</param>
+    /// <returns>The matching Sprite table entry, or <see langword="null"/>.</returns>
+    public FgoSpriteResolution Resolve(FgoAetSource source)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        return FgoSprites?.Resolve(source);
     }
 
     /// <inheritdoc />

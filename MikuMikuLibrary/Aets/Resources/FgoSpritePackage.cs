@@ -51,6 +51,24 @@ public sealed class FgoSpritePackage : IDisposable
             : Table.Entries.FirstOrDefault(x => FgoSpriteName.Normalize(x.Name) == normalized);
     }
 
+    /// <summary>Determines whether a normalized Sprite name carries this package's stem.</summary>
+    /// <param name="normalizedName">A name normalized by <see cref="FgoSpriteName.Normalize"/>.</param>
+    /// <returns><see langword="true"/> when the name starts with the package stem.</returns>
+    internal bool MatchesSpriteName(string normalizedName)
+    {
+        if (string.IsNullOrEmpty(normalizedName))
+            return false;
+
+        string stem = Name;
+        if (stem.StartsWith("spr_", StringComparison.OrdinalIgnoreCase))
+            stem = stem[4..];
+        if (stem.EndsWith("_table", StringComparison.OrdinalIgnoreCase))
+            stem = stem[..^6];
+
+        return normalizedName.Equals(stem, StringComparison.OrdinalIgnoreCase) ||
+               normalizedName.StartsWith(stem + "_", StringComparison.OrdinalIgnoreCase);
+    }
+
     /// <summary>Loads the package texture set on first use.</summary>
     /// <returns>The decoded TXP3 texture set.</returns>
     public TextureSet LoadTextureSet()

@@ -26,7 +26,7 @@ public sealed class AetAssetPreviewControl : UserControl
     public void SetSource(FgoAetSource source)
     {
         ArgumentNullException.ThrowIfNull(source);
-        var resolution = AetResourceContext.Instance.Resolve(source.Path, source.Name);
+        var resolution = AetResourceContext.Instance.Resolve(source);
         SetResolvedSource(resolution);
     }
 

@@ -3,6 +3,10 @@ using OpenTK.Graphics.OpenGL;
 
 namespace MikuMikuModel.GUI.Controls.ModelView;
 
+using DrawingBitmap = System.Drawing.Bitmap;
+using DrawingPixelFormat = System.Drawing.Imaging.PixelFormat;
+using System.Runtime.InteropServices;
+
 public class GLTexture : IDisposable
 {
     private static readonly int[] sCubeMapIndices = { 0, 1, 2, 3, 5, 4 };
@@ -168,6 +172,48 @@ public class GLTexture : IDisposable
         mLength = texture.EnumerateLevels()
             .SelectMany(x => x).Sum(x => x.Data.Length);
 
+        GC.AddMemoryPressure(mLength);
+    }
+
+    /// <summary>Uploads a decoded RGBA bitmap to a 2D OpenGL texture.</summary>
+    /// <param name="bitmap">The bitmap to upload. The caller retains ownership.</param>
+    public GLTexture(DrawingBitmap bitmap)
+    {
+        ArgumentNullException.ThrowIfNull(bitmap);
+
+        Id = GL.GenTexture();
+        Target = TextureTarget.Texture2D;
+        GL.BindTexture(Target, Id);
+        GL.TexParameter(Target, TextureParameterName.TextureWrapS, (int)TextureWrapMode.ClampToEdge);
+        GL.TexParameter(Target, TextureParameterName.TextureWrapT, (int)TextureWrapMode.ClampToEdge);
+        GL.TexParameter(Target, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Linear);
+        GL.TexParameter(Target, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Linear);
+
+        var rectangle = new System.Drawing.Rectangle(0, 0, bitmap.Width, bitmap.Height);
+        var data = bitmap.LockBits(rectangle, System.Drawing.Imaging.ImageLockMode.ReadOnly,
+            DrawingPixelFormat.Format32bppArgb);
+        try
+        {
+            GL.PixelStore(PixelStoreParameter.UnpackAlignment, 1);
+            // GDI+ may expose a padded or negative-stride bitmap. OpenGL
+            // assumes tightly packed rows, so copy each logical row before
+            // uploading instead of passing the native stride through.
+            int rowLength = checked(bitmap.Width * 4);
+            var pixels = new byte[checked(rowLength * bitmap.Height)];
+            for (int row = 0; row < bitmap.Height; row++)
+            {
+                IntPtr rowAddress = IntPtr.Add(data.Scan0, checked(row * data.Stride));
+                Marshal.Copy(rowAddress, pixels, checked(row * rowLength), rowLength);
+            }
+            GL.TexImage2D(Target, 0, PixelInternalFormat.Rgba8, bitmap.Width, bitmap.Height, 0,
+                PixelFormat.Bgra, PixelType.UnsignedByte, pixels);
+        }
+        finally
+        {
+            bitmap.UnlockBits(data);
+        }
+
+        mLength = (long)bitmap.Width * bitmap.Height * 4;
         GC.AddMemoryPressure(mLength);
     }
 }

@@ -1,3 +1,5 @@
+using MikuMikuLibrary.Aets;
+
 namespace MikuMikuLibrary.Aets.Resources;
 
 /// <summary>Result of resolving an AET asset to an FGO Sprite entry.</summary>
@@ -86,13 +88,36 @@ public sealed class FgoSpriteCatalog : IDisposable
 
     /// <summary>Resolves a raw AET asset path or Sprite name.</summary>
     /// <param name="name">The asset path/name to resolve.</param>
-    /// <returns>The first matching Sprite, or <see langword="null"/>.</returns>
+    /// <returns>The best matching Sprite package entry, or <see langword="null"/>.</returns>
     public FgoSpriteResolution Resolve(string name)
     {
         string key = FgoSpriteName.Normalize(name);
-        return string.IsNullOrEmpty(key) || !mSprites.TryGetValue(key, out var matches)
-            ? null
-            : matches[0];
+        if (string.IsNullOrEmpty(key) || !mSprites.TryGetValue(key, out var matches))
+            return null;
+
+        // AET names are usually prefixed with the package stem (for example
+        // ADV_CMN_adv_bg_eff02 belongs to spr_adv_cmn_table). Prefer that
+        // package when the same logical Sprite name exists in multiple tables;
+        // falling back to a stable path order keeps legacy/shared names
+        // deterministic.
+        return matches
+            .OrderByDescending(value => value.Package.MatchesSpriteName(key))
+            .ThenBy(value => value.Package.Name, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(value => value.Package.TablePath, StringComparer.OrdinalIgnoreCase)
+            .First();
+    }
+
+    /// <summary>
+    /// Resolves an AET source against the Sprite table records.
+    /// The source display name is preferred because it is the table's logical
+    /// SpriteName; the stored path is only a compatibility fallback.
+    /// </summary>
+    /// <param name="source">The parsed AET asset source.</param>
+    /// <returns>The matching table entry, or <see langword="null"/>.</returns>
+    public FgoSpriteResolution Resolve(FgoAetSource source)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        return Resolve(source.Name) ?? Resolve(source.Path);
     }
 
     /// <summary>Disposes the catalog and releases all loaded package state.</summary>

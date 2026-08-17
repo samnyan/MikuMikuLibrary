@@ -1,340 +1,255 @@
-using System.Drawing.Drawing2D;
-using System.Drawing.Imaging;
+using System.Numerics;
 using System.Threading;
 using MikuMikuLibrary.Aets;
 using MikuMikuLibrary.Aets.Resources;
+using MikuMikuModel.GUI.Controls.ModelView;
 using MikuMikuModel.Resources;
+using OpenTK.Graphics.OpenGL;
+using OpenTK.WinForms;
 
 namespace MikuMikuModel.GUI.Controls;
 
-/// <summary>Renders one static frame of an FGO AET scene.</summary>
-/// <remarks>
-/// Resource lookup, archive I/O, texture decoding, and frame composition all
-/// run on the thread pool. The UI thread only updates progress and swaps the
-/// completed bitmap into the PictureBox. The bitmap cache is deliberately
-/// independent from scene composition so it can be reused by animation.
-/// </remarks>
+/// <summary>Hosts the GPU-backed FGO AET scene preview and its timeline.</summary>
 public sealed class AetScenePreviewControl : UserControl
 {
     private static AetScenePreviewControl sInstance;
 
+    private readonly AetSceneGLView mView = new();
     private readonly Label mStatusLabel = new();
     private readonly ProgressBar mProgressBar = new();
-    private readonly PictureBox mPictureBox = new();
+    private readonly Panel mTimelinePanel = new();
+    private readonly Button mPlayButton = new();
+    private readonly TrackBar mFrameTrackBar = new();
+    private readonly Label mFrameLabel = new();
     private readonly FgoSpriteBitmapCache mBitmapCache = new();
-    private Bitmap mBitmap;
-    private CancellationTokenSource mRenderCancellation;
-    private int mRenderVersion;
+    private readonly System.Windows.Forms.Timer mPlaybackTimer = new();
+    private CancellationTokenSource mPrepareCancellation;
+    private FgoAetSet mSet;
+    private FgoAetRecord mScene;
+    private FgoAetRenderScene mRenderScene;
+    private int mDuration;
+    private float mFrameRate = 60.0f;
+    // AET curves use seconds as their time coordinate. The track bar stores
+    // integer frame numbers and is converted at the boundary.
+    private float mCurrentTime;
+    private bool mPlaying;
     private bool mDisposed;
 
-    /// <summary>Gets the shared scene preview control instance.</summary>
+    /// <summary>Gets the shared AET preview instance.</summary>
     public static AetScenePreviewControl Instance => sInstance ??= new();
 
-    /// <summary>Starts rendering a scene at its first static frame.</summary>
-    /// <param name="set">The parsed FGO AET set.</param>
-    /// <param name="scene">The scene record to render.</param>
+    /// <summary>Requests a redraw after a layer visibility change.</summary>
+    public void RefreshVisibility() => mView.Invalidate();
+
+    /// <summary>Selects a layer in the active scene without rebuilding the scene.</summary>
+    /// <param name="layer">The parsed AET layer to highlight, or <see langword="null"/> to clear selection.</param>
+    public void SelectLayer(FgoAetChild layer)
+    {
+        if (mRenderScene == null)
+            return;
+
+        mView.SelectLayer(layer);
+    }
+
+    /// <summary>Shows a scene and selects one of its layers without resetting an already loaded scene.</summary>
+    /// <param name="set">The parsed AET set.</param>
+    /// <param name="scene">The scene record.</param>
+    /// <param name="layer">The tree-selected layer, or <see langword="null"/>.</param>
+    public void ShowScene(FgoAetSet set, FgoAetRecord scene, FgoAetChild layer)
+    {
+        if (!ReferenceEquals(mSet, set) || !ReferenceEquals(mScene, scene) || mRenderScene == null)
+            SetScene(set, scene);
+
+        SelectLayer(layer);
+    }
+
+    /// <summary>Sets the scene rendered by the control.</summary>
     public void SetScene(FgoAetSet set, FgoAetRecord scene)
     {
         ArgumentNullException.ThrowIfNull(set);
         ArgumentNullException.ThrowIfNull(scene);
 
-        mRenderCancellation?.Cancel();
-        var cancellation = new CancellationTokenSource();
-        mRenderCancellation = cancellation;
-        int version = Interlocked.Increment(ref mRenderVersion);
-
-        DisposeBitmap();
-        mProgressBar.Visible = false;
-        mStatusLabel.Text = string.Empty;
-
         if (scene.Type != FgoAetRecordType.Scene)
         {
-            cancellation.Dispose();
-            mRenderCancellation = null;
-            SetStatus("Not a scene");
+            mStatusLabel.Text = "Not a scene";
             return;
         }
 
-        mStatusLabel.Text = "Preparing scene...";
-        mStatusLabel.ForeColor = Color.DarkOrange;
-        var progress = new Progress<SceneRenderProgress>(value =>
-        {
-            if (version == Volatile.Read(ref mRenderVersion) && !mDisposed)
-                UpdateProgress(value);
-        });
-
-        _ = RenderAndPresentAsync(set, scene, cancellation, version, progress);
+        mSet = set;
+        mScene = scene;
+        mRenderScene = FgoAetRenderScene.Build(set, scene);
+        mFrameRate = Math.Clamp(mRenderScene.FrameRate, 1.0f, 240.0f);
+        mDuration = Math.Clamp((int)MathF.Ceiling(mRenderScene.Duration * mFrameRate), 1, 100000);
+        mCurrentTime = 0.0f;
+        mPlaying = false;
+        mPlayButton.Text = "Play";
+        mFrameTrackBar.Maximum = mDuration;
+        mFrameTrackBar.Value = 0;
+        mPlaybackTimer.Interval = Math.Clamp((int)MathF.Round(1000.0f / mFrameRate), 1, 1000);
+        UpdateFrameLabel();
+        mView.SetScene(mRenderScene);
+        PrepareResourcesAsync(mRenderScene);
     }
 
-    private async Task RenderAndPresentAsync(FgoAetSet set, FgoAetRecord scene,
-        CancellationTokenSource cancellation, int version,
-        IProgress<SceneRenderProgress> progress)
+    /// <summary>Prepares all referenced atlases off the UI thread.</summary>
+    private async void PrepareResourcesAsync(FgoAetRenderScene scene)
     {
+        mPrepareCancellation?.Cancel();
+        mPrepareCancellation?.Dispose();
+        var cancellation = mPrepareCancellation = new CancellationTokenSource();
+        var resources = CollectResources(scene).ToArray();
+        mProgressBar.Visible = resources.Length > 0;
+        mProgressBar.Maximum = Math.Max(1, resources.Length);
+        mProgressBar.Value = 0;
+        mStatusLabel.Text = resources.Length == 0 ? "No Sprite resources" : "Loading AET resources...";
+
         try
         {
-            var result = await RenderSceneAsync(set, scene, cancellation.Token, progress);
-            if (cancellation.IsCancellationRequested || version != Volatile.Read(ref mRenderVersion) || mDisposed)
+            var prepared = new Dictionary<string, PreparedAetAtlas>(StringComparer.Ordinal);
+            for (int i = 0; i < resources.Length; i++)
             {
-                result.Dispose();
-                return;
+                cancellation.Token.ThrowIfCancellationRequested();
+                var resolution = resources[i];
+                try
+                {
+                    var atlas = await mBitmapCache.LoadAtlasAsync(resolution, cancellation.Token)
+                        .ConfigureAwait(false);
+                    prepared[CreateResourceKey(resolution)] =
+                        new PreparedAetAtlas(resolution, atlas);
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception exception)
+                {
+                    System.Diagnostics.Debug.WriteLine(
+                        $"AET resource load failed for '{resolution.Entry.Name}': {exception.Message}");
+                }
+
+                int completed = i + 1;
+                PostToUi(() =>
+                {
+                    if (!mDisposed && ReferenceEquals(mRenderScene, scene))
+                    {
+                        mProgressBar.Value = Math.Clamp(completed, 0, mProgressBar.Maximum);
+                        mStatusLabel.Text = $"Loading AET resources {completed}/{resources.Length}";
+                    }
+                });
             }
 
-            DisposeBitmap();
-            mBitmap = result.DetachBitmap();
-            mPictureBox.Image = mBitmap;
-            mProgressBar.Visible = false;
-            mStatusLabel.Text = result.MissingAssets > 0
-                ? $"Static frame 1  •  {result.RenderedAssets} assets  •  {result.MissingAssets} unresolved"
-                : $"Static frame 1  •  {result.Width}x{result.Height}";
-            mStatusLabel.ForeColor = result.MissingAssets > 0 ? Color.DarkOrange : Color.DarkGreen;
+            cancellation.Token.ThrowIfCancellationRequested();
+            PostToUi(() =>
+            {
+                if (mDisposed || !ReferenceEquals(mRenderScene, scene))
+                    return;
+
+                mView.SetResources(prepared);
+                mProgressBar.Visible = false;
+                mStatusLabel.Text = $"Frame {CurrentFrameNumber:0.##}/{mDuration} · GPU atlases {prepared.Count}";
+                mView.Invalidate();
+            });
         }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
         {
-            // A newer selection replaced this render. Its result is discarded
-            // and the newer render owns the UI.
         }
-        catch (Exception)
+        catch (Exception exception)
         {
-            if (!cancellation.IsCancellationRequested && version == Volatile.Read(ref mRenderVersion))
-                SetStatus("Scene render error");
-        }
-        finally
-        {
-            cancellation.Dispose();
-            if (ReferenceEquals(mRenderCancellation, cancellation))
-                mRenderCancellation = null;
+            PostToUi(() =>
+            {
+                if (!mDisposed && ReferenceEquals(mRenderScene, scene))
+                    SetStatus($"AET resource error: {exception.Message}");
+            });
         }
     }
 
-    private async Task<SceneRenderResult> RenderSceneAsync(FgoAetSet set, FgoAetRecord scene,
-        CancellationToken cancellationToken, IProgress<SceneRenderProgress> progress)
+    private static IEnumerable<FgoSpriteResolution> CollectResources(FgoAetRenderScene scene)
     {
-        var records = set.Records.ToDictionary(record => record.Index);
-        var assets = new List<FgoAetRecord>();
-        CollectAssets(records, scene, assets, new HashSet<int>());
-        progress.Report(new SceneRenderProgress(0, assets.Count, mBitmapCache.AtlasCount));
-
-        var bitmaps = new Dictionary<int, Bitmap>();
-        int missingAssets = 0;
-        try
+        var resources = new Dictionary<string, FgoSpriteResolution>(StringComparer.Ordinal);
+        void Visit(IEnumerable<FgoAetRenderLayer> layers)
         {
-            for (int index = 0; index < assets.Count; index++)
+            foreach (var layer in layers)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                var asset = assets[index];
-                if (asset.Sources.Count > 0)
-                {
-                    var source = asset.Sources[0];
-                    var resolution = AetResourceContext.Instance.Resolve(source.Path, source.Name);
-                    if (resolution == null)
-                    {
-                        missingAssets++;
-                    }
-                    else
-                    {
-                        try
-                        {
-                            var bitmap = await mBitmapCache.LoadSpriteAsync(resolution, cancellationToken)
-                                .ConfigureAwait(false);
-                            if (bitmap == null)
-                                missingAssets++;
-                            else
-                                bitmaps[asset.Index] = bitmap;
-                        }
-                        catch (OperationCanceledException)
-                        {
-                            throw;
-                        }
-                        catch (Exception)
-                        {
-                            missingAssets++;
-                        }
-                    }
-                }
-
-                progress.Report(new SceneRenderProgress(index + 1, assets.Count, mBitmapCache.AtlasCount));
-            }
-
-            cancellationToken.ThrowIfCancellationRequested();
-            var result = await Task.Run(() => DrawScene(scene, records, bitmaps, missingAssets,
-                cancellationToken), cancellationToken).ConfigureAwait(false);
-            bitmaps = null;
-            return result;
-        }
-        finally
-        {
-            if (bitmaps != null)
-            {
-                foreach (var bitmap in bitmaps.Values)
-                    bitmap.Dispose();
+                if (layer.Resolution != null)
+                    resources.TryAdd(CreateResourceKey(layer.Resolution), layer.Resolution);
+                Visit(layer.Children);
             }
         }
+
+        Visit(scene.Layers);
+        return resources.Values;
     }
 
-    private static void CollectAssets(IReadOnlyDictionary<int, FgoAetRecord> records,
-        FgoAetRecord scene, ICollection<FgoAetRecord> assets, ISet<int> visited)
+    private static string CreateResourceKey(FgoSpriteResolution resolution) => string.Join("\u001f",
+        resolution.Package.ArchivePath ?? resolution.Package.TablePath,
+        resolution.Entry.TextureIndex, resolution.Entry.TextureName,
+        resolution.Entry.AtlasWidth, resolution.Entry.AtlasHeight);
+
+    private void TogglePlayback()
     {
-        if (!visited.Add(scene.Index))
+        if (mRenderScene == null)
             return;
 
-        try
-        {
-            foreach (var child in scene.Children)
-            {
-                if (!records.TryGetValue((int)child.Kind, out var record))
-                    continue;
-
-                if (record.Type == FgoAetRecordType.Scene)
-                    CollectAssets(records, record, assets, visited);
-                else if (record.Type == FgoAetRecordType.Asset)
-                    assets.Add(record);
-            }
-        }
-        finally
-        {
-            visited.Remove(scene.Index);
-        }
+        mPlaying = !mPlaying;
+        mPlayButton.Text = mPlaying ? "Pause" : "Play";
+        if (mPlaying)
+            mPlaybackTimer.Start();
+        else
+            mPlaybackTimer.Stop();
     }
 
-    private static SceneRenderResult DrawScene(FgoAetRecord scene,
-        IReadOnlyDictionary<int, FgoAetRecord> records,
-        IReadOnlyDictionary<int, Bitmap> bitmaps, int missingAssets,
-        CancellationToken cancellationToken)
+    private void AdvanceFrame()
     {
-        int width = scene.Width > 0 && scene.Width <= 8192 ? (int)scene.Width : 1920;
-        int height = scene.Height > 0 && scene.Height <= 8192 ? (int)scene.Height : 1080;
-        var bitmap = new Bitmap(width, height, PixelFormat.Format32bppArgb);
-        int renderedAssets = 0;
-
-        try
-        {
-            using (var graphics = Graphics.FromImage(bitmap))
-            {
-                graphics.Clear(ToColor(scene.Color));
-                graphics.CompositingMode = CompositingMode.SourceOver;
-                graphics.CompositingQuality = CompositingQuality.HighQuality;
-                graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
-                graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
-                graphics.SmoothingMode = SmoothingMode.HighQuality;
-
-                var state = new RenderState(records, bitmaps, graphics, new HashSet<int>(),
-                    cancellationToken, renderedAssets);
-                using var identity = new Matrix();
-                RenderScene(state, scene, identity, 0);
-                renderedAssets = state.RenderedAssets;
-            }
-
-            return new SceneRenderResult(bitmap, width, height, renderedAssets, missingAssets);
-        }
-        catch
-        {
-            bitmap.Dispose();
-            throw;
-        }
-    }
-
-    private static void RenderScene(RenderState state, FgoAetRecord scene,
-        Matrix parentTransform, int depth)
-    {
-        state.CancellationToken.ThrowIfCancellationRequested();
-        if (depth > 64 || !state.Visited.Add(scene.Index))
+        if (!mPlaying || mRenderScene == null)
             return;
 
-        try
-        {
-            foreach (var child in scene.Children)
-            {
-                state.CancellationToken.ThrowIfCancellationRequested();
-                if (!state.Records.TryGetValue((int)child.Kind, out var record))
-                    continue;
-
-                using var transform = parentTransform.Clone();
-                ApplyTransform(transform, child);
-
-                if (record.Type == FgoAetRecordType.Scene)
-                    RenderScene(state, record, transform, depth + 1);
-                else if (record.Type == FgoAetRecordType.Asset)
-                    RenderAsset(state, record, transform);
-            }
-        }
-        finally
-        {
-            state.Visited.Remove(scene.Index);
-        }
+        mCurrentTime += 1.0f / mFrameRate;
+        if (mCurrentTime > mRenderScene.Duration)
+            mCurrentTime = 0.0f;
+        mFrameTrackBar.Value = Math.Clamp((int)MathF.Round(mCurrentTime * mFrameRate), 0, mDuration);
+        UpdateFrameLabel();
+        mView.SetFrame(mCurrentTime);
+        mStatusLabel.Text = $"Frame {CurrentFrameNumber:0.##}/{mDuration}";
     }
 
-    private static void RenderAsset(RenderState state, FgoAetRecord asset, Matrix transform)
+    private void OnFrameChanged()
     {
-        if (!state.Bitmaps.TryGetValue(asset.Index, out var bitmap))
+        if (mRenderScene == null)
             return;
 
-        state.RenderedAssets++;
-        using var attributes = new ImageAttributes();
-        var color = Math.Clamp(asset.Color >> 24, 0, 255) / 255.0f;
-        if (color < 1.0f)
-        {
-            var matrix = new ColorMatrix { Matrix33 = color };
-            attributes.SetColorMatrix(matrix);
-        }
-
-        var corners = new[]
-        {
-            new PointF(0, 0),
-            new PointF(bitmap.Width, 0),
-            new PointF(0, bitmap.Height)
-        };
-        transform.TransformPoints(corners);
-        state.Graphics.DrawImage(bitmap,
-            new[] { corners[0], corners[1], corners[2] },
-            new Rectangle(0, 0, bitmap.Width, bitmap.Height),
-            GraphicsUnit.Pixel, attributes);
+        mCurrentTime = mFrameTrackBar.Value / mFrameRate;
+        UpdateFrameLabel();
+        mView.SetFrame(mCurrentTime);
+        if (!mPlaying)
+            mStatusLabel.Text = $"Frame {CurrentFrameNumber:0.##}/{mDuration}";
     }
 
-    private static void ApplyTransform(Matrix transform, FgoAetChild child)
-    {
-        transform.Translate(child.StaticPositionX, child.StaticPositionY, MatrixOrder.Append);
-        var scale = child.StaticScale;
-        if (float.IsFinite(scale) && Math.Abs(scale - 1.0f) > 0.0001f)
-            transform.Scale(scale, scale, MatrixOrder.Append);
-    }
+    private float CurrentFrameNumber => mCurrentTime * mFrameRate;
 
-    private static Color ToColor(uint value) => Color.FromArgb(
-        (int)((value >> 24) & 0xFF),
-        (int)((value >> 16) & 0xFF),
-        (int)((value >> 8) & 0xFF),
-        (int)(value & 0xFF));
-
-    private void UpdateProgress(SceneRenderProgress value)
-    {
-        if (value.Total <= 0)
-        {
-            mProgressBar.Visible = false;
-            mStatusLabel.Text = "Rendering scene...";
-            return;
-        }
-
-        mProgressBar.Visible = true;
-        mProgressBar.Style = ProgressBarStyle.Continuous;
-        mProgressBar.Maximum = value.Total;
-        mProgressBar.Value = Math.Clamp(value.Completed, 0, value.Total);
-        mStatusLabel.Text = $"Loading sprites {value.Completed}/{value.Total}  •  " +
-                            $"{value.LoadedAtlases} texture package(s)";
-        mStatusLabel.ForeColor = Color.DarkOrange;
-    }
+    private void UpdateFrameLabel() => mFrameLabel.Text = $"Frame {CurrentFrameNumber:0.##}/{mDuration}";
 
     private void SetStatus(string status)
     {
-        mPictureBox.Image = null;
         mProgressBar.Visible = false;
         mStatusLabel.Text = status;
         mStatusLabel.ForeColor = Color.DarkRed;
     }
 
-    private void DisposeBitmap()
+    /// <summary>Posts a UI update while tolerating a handle recreation during resize.</summary>
+    private void PostToUi(Action action)
     {
-        mPictureBox.Image = null;
-        mBitmap?.Dispose();
-        mBitmap = null;
+        if (mDisposed || IsDisposed || Disposing || !IsHandleCreated)
+            return;
+
+        try
+        {
+            BeginInvoke(action);
+        }
+        catch (InvalidOperationException)
+        {
+            // WinForms can destroy/recreate the handle between the checks above
+            // and BeginInvoke while the user is resizing the main window.
+        }
     }
 
     protected override void Dispose(bool disposing)
@@ -342,12 +257,17 @@ public sealed class AetScenePreviewControl : UserControl
         if (disposing)
         {
             mDisposed = true;
-            Interlocked.Increment(ref mRenderVersion);
-            mRenderCancellation?.Cancel();
-            DisposeBitmap();
+            mPrepareCancellation?.Cancel();
+            mPrepareCancellation?.Dispose();
+            mPlaybackTimer.Stop();
+            mPlaybackTimer.Dispose();
             mBitmapCache.Dispose();
+            mView.Dispose();
             mProgressBar.Dispose();
-            mPictureBox.Dispose();
+            mTimelinePanel.Dispose();
+            mPlayButton.Dispose();
+            mFrameTrackBar.Dispose();
+            mFrameLabel.Dispose();
             mStatusLabel.Dispose();
         }
 
@@ -358,10 +278,14 @@ public sealed class AetScenePreviewControl : UserControl
     {
         Dock = DockStyle.Fill;
         BackColor = Color.White;
-
-        mPictureBox.Dock = DockStyle.Fill;
-        mPictureBox.SizeMode = PictureBoxSizeMode.Zoom;
-        mPictureBox.BackColor = Color.LightGray;
+        mView.Dock = DockStyle.Fill;
+        mView.FrameRendered += OnFrameRendered;
+        mView.RenderUnavailable += (sender, reason) => SetStatus(reason);
+        mView.LayerSelected += (sender, name) =>
+        {
+            if (!string.IsNullOrEmpty(name))
+                mStatusLabel.Text = $"Selected: {name}  •  Frame {CurrentFrameNumber:0.##}/{mDuration}";
+        };
 
         mProgressBar.Dock = DockStyle.Bottom;
         mProgressBar.Height = 18;
@@ -373,67 +297,514 @@ public sealed class AetScenePreviewControl : UserControl
         mStatusLabel.Padding = new Padding(6, 3, 6, 3);
         mStatusLabel.Font = new Font(mStatusLabel.Font, FontStyle.Bold);
 
-        Controls.Add(mPictureBox);
+        mPlayButton.Text = "Play";
+        mPlayButton.Width = 64;
+        mPlayButton.Dock = DockStyle.Left;
+        mPlayButton.Click += (sender, args) => TogglePlayback();
+
+        mFrameLabel.AutoSize = false;
+        mFrameLabel.Width = 110;
+        mFrameLabel.TextAlign = ContentAlignment.MiddleRight;
+        mFrameLabel.Dock = DockStyle.Right;
+
+        mFrameTrackBar.Minimum = 0;
+        mFrameTrackBar.Maximum = 1;
+        mFrameTrackBar.TickStyle = TickStyle.None;
+        mFrameTrackBar.Dock = DockStyle.Fill;
+        mFrameTrackBar.ValueChanged += (sender, args) => OnFrameChanged();
+
+        mTimelinePanel.Dock = DockStyle.Bottom;
+        mTimelinePanel.Height = 34;
+        mTimelinePanel.Padding = new Padding(4, 0, 4, 0);
+        mTimelinePanel.Controls.Add(mFrameTrackBar);
+        mTimelinePanel.Controls.Add(mFrameLabel);
+        mTimelinePanel.Controls.Add(mPlayButton);
+
+        mPlaybackTimer.Interval = 33;
+        mPlaybackTimer.Tick += (sender, args) => AdvanceFrame();
+
+        Controls.Add(mView);
         Controls.Add(mProgressBar);
         Controls.Add(mStatusLabel);
+        Controls.Add(mTimelinePanel);
         SetStatus("No scene selected");
     }
 
-    private sealed record SceneRenderProgress(int Completed, int Total, int LoadedAtlases);
-
-    private sealed class SceneRenderResult : IDisposable
+    private void OnFrameRendered(object sender, AetFrameRenderEventArgs args)
     {
-        private Bitmap mBitmap;
-
-        public int Width { get; }
-        public int Height { get; }
-        public int RenderedAssets { get; }
-        public int MissingAssets { get; }
-
-        public SceneRenderResult(Bitmap bitmap, int width, int height,
-            int renderedAssets, int missingAssets)
+        if (!mDisposed && mRenderScene != null && args.Scene == mRenderScene)
         {
-            mBitmap = bitmap;
-            Width = width;
-            Height = height;
-            RenderedAssets = renderedAssets;
-            MissingAssets = missingAssets;
-        }
-
-        public Bitmap DetachBitmap()
-        {
-            var bitmap = mBitmap;
-            mBitmap = null;
-            return bitmap;
-        }
-
-        public void Dispose()
-        {
-            mBitmap?.Dispose();
-            mBitmap = null;
+            mStatusLabel.ForeColor = args.MissingAssets > 0 ? Color.DarkOrange : Color.DarkGreen;
+            if (!mPlaying)
+                mStatusLabel.Text = $"Frame {CurrentFrameNumber:0.##}/{mDuration} · " +
+                    $"sprites {args.RenderedAssets}, missing {args.MissingAssets}";
         }
     }
 
-    private sealed class RenderState
-    {
-        public IReadOnlyDictionary<int, FgoAetRecord> Records { get; }
-        public IReadOnlyDictionary<int, Bitmap> Bitmaps { get; }
-        public Graphics Graphics { get; }
-        public HashSet<int> Visited { get; }
-        public CancellationToken CancellationToken { get; }
-        public int RenderedAssets { get; set; }
+    private sealed record PreparedAetAtlas(FgoSpriteResolution Resolution, Bitmap Atlas);
 
-        public RenderState(IReadOnlyDictionary<int, FgoAetRecord> records,
-            IReadOnlyDictionary<int, Bitmap> bitmaps, Graphics graphics,
-            HashSet<int> visited, CancellationToken cancellationToken,
+    private sealed class AetFrameRenderEventArgs : EventArgs
+    {
+        public FgoAetRenderScene Scene { get; }
+        public int MissingAssets { get; }
+        public int RenderedAssets { get; }
+
+        public AetFrameRenderEventArgs(FgoAetRenderScene scene, int missingAssets,
             int renderedAssets)
         {
-            Records = records;
-            Bitmaps = bitmaps;
-            Graphics = graphics;
-            Visited = visited;
-            CancellationToken = cancellationToken;
+            Scene = scene;
+            MissingAssets = missingAssets;
             RenderedAssets = renderedAssets;
         }
+    }
+
+    private sealed class AetSceneGLView : GLControl
+    {
+        private readonly Dictionary<string, GpuAetAtlas> mAtlases = new(StringComparer.Ordinal);
+        private readonly List<HitLayer> mHitLayers = new();
+        private GLShaderProgram mShader;
+        private GLBuffer<float> mVertexBuffer;
+        private GLBuffer<uint> mIndexBuffer;
+        private int mVertexArray;
+        private FgoAetRenderScene mScene;
+        private float mTime;
+        private float mZoom = 1.0f;
+        private Vector2 mPan;
+        private Point mPreviousMouse;
+        private bool mPanning;
+        private HitLayer mSelectedLayer;
+        private FgoAetChild mSelectedData;
+        private bool mLoaded;
+        private bool mDisposing;
+        private Dictionary<string, PreparedAetAtlas> mPendingResources;
+
+        public event EventHandler<AetFrameRenderEventArgs> FrameRendered;
+        public event EventHandler<string> LayerSelected;
+        public event EventHandler<string> RenderUnavailable;
+
+        public AetSceneGLView() : base(new GLControlSettings { NumberOfSamples = 2 })
+        {
+            BackColor = Color.LightGray;
+        }
+
+        public void SetScene(FgoAetRenderScene scene)
+        {
+            if (mDisposing || IsDisposed)
+                return;
+
+            mScene = scene;
+            mTime = 0.0f;
+            mHitLayers.Clear();
+            mSelectedLayer = null;
+            mSelectedData = null;
+            mZoom = 1.0f;
+            mPan = Vector2.Zero;
+            Invalidate();
+        }
+
+        public void SetFrame(float time)
+        {
+            if (mDisposing || IsDisposed)
+                return;
+
+            mTime = time;
+            Invalidate();
+        }
+
+        public void SetResources(Dictionary<string, PreparedAetAtlas> resources)
+        {
+            if (mDisposing || IsDisposed)
+                return;
+
+            mPendingResources = resources;
+            if (mLoaded)
+                UploadResources();
+            Invalidate();
+        }
+
+        public void SelectLayer(FgoAetChild layer)
+        {
+            if (mDisposing || IsDisposed)
+                return;
+
+            mSelectedData = layer;
+            mSelectedLayer = null;
+            Invalidate();
+        }
+
+        protected override void OnLoad(EventArgs e)
+        {
+            base.OnLoad(e);
+            if (!TryMakeCurrent())
+            {
+                RenderUnavailable?.Invoke(this, "OpenGL AET renderer is unavailable");
+                return;
+            }
+
+            // Create the program only after GLControl has created its native
+            // child window. Constructing it in the WinForms constructor can
+            // run before a valid context exists.
+            mShader = GLShaderProgram.Create("Aet2D");
+            mLoaded = mShader != null;
+            if (!mLoaded)
+            {
+                RenderUnavailable?.Invoke(this, "OpenGL AET renderer is unavailable");
+                return;
+            }
+            mVertexArray = GL.GenVertexArray();
+            GL.BindVertexArray(mVertexArray);
+            mVertexBuffer = new GLBuffer<float>(BufferTarget.ArrayBuffer,
+                new[] { 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 1.0f, 0.0f,
+                    1.0f, 1.0f, 1.0f, 1.0f, 0.0f, 1.0f, 0.0f, 1.0f },
+                BufferUsageHint.StaticDraw);
+            mIndexBuffer = new GLBuffer<uint>(BufferTarget.ElementArrayBuffer,
+                new[] { 0u, 1u, 2u, 0u, 2u, 3u }, BufferUsageHint.StaticDraw);
+            mVertexBuffer.Bind();
+            GL.VertexAttribPointer(0, 2, VertexAttribPointerType.Float, false, 4 * sizeof(float), 0);
+            GL.EnableVertexAttribArray(0);
+            GL.VertexAttribPointer(1, 2, VertexAttribPointerType.Float, false, 4 * sizeof(float), 2 * sizeof(float));
+            GL.EnableVertexAttribArray(1);
+            mIndexBuffer.Bind();
+            UploadResources();
+        }
+
+        private void UploadResources()
+        {
+            if (!mLoaded || mPendingResources == null)
+                return;
+
+            if (!TryMakeCurrent())
+                return;
+
+            var pending = mPendingResources;
+            var uploaded = new Dictionary<string, GpuAetAtlas>(StringComparer.Ordinal);
+            try
+            {
+                foreach (var pair in pending)
+                    uploaded[pair.Key] = new GpuAetAtlas(new GLTexture(pair.Value.Atlas),
+                        pair.Value.Atlas.Width, pair.Value.Atlas.Height);
+
+                foreach (var atlas in mAtlases.Values)
+                    atlas.Texture.Dispose();
+                mAtlases.Clear();
+                foreach (var pair in uploaded)
+                    mAtlases[pair.Key] = pair.Value;
+                mPendingResources = null;
+            }
+            catch (Exception exception)
+            {
+                foreach (var sprite in uploaded.Values)
+                {
+                    try
+                    {
+                        sprite.Texture.Dispose();
+                    }
+                    catch (Exception disposeException)
+                    {
+                        Debug.WriteLine($"AET texture cleanup failed: {disposeException.Message}");
+                    }
+                }
+
+                Debug.WriteLine($"AET texture upload failed: {exception}");
+            }
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            // GLControl.OnPaint calls EnsureCreated(), which guarantees that
+            // its child GLFW window/context exists before issuing GL commands.
+            // Keep the base call even though the actual frame is rendered by
+            // this override.
+            try
+            {
+                base.OnPaint(e);
+            }
+            catch (InvalidOperationException exception)
+            {
+                Debug.WriteLine($"AET GLControl paint setup failed: {exception.Message}");
+                return;
+            }
+
+            if (!mLoaded || mShader == null || mDisposing || IsDisposed ||
+                ClientSize.Width <= 0 || ClientSize.Height <= 0 || !TryMakeCurrent())
+            {
+                e.Graphics.Clear(Color.LightGray);
+                return;
+            }
+
+            // Resource completion can coincide with a handle resize. Retry a
+            // deferred upload on the next paint once the context is current.
+            UploadResources();
+
+            try
+            {
+                GL.Viewport(0, 0, ClientSize.Width, ClientSize.Height);
+                var background = mScene == null ? Color.LightGray : ToColor(mScene.Source.Color);
+                // An uninitialised AET background should not look like a failed
+                // renderer. Preserve explicit scene colors, including opaque
+                // black, while showing a neutral canvas for transparent colors.
+                if (mScene == null || background.A == 0)
+                    background = Color.LightGray;
+                GL.ClearColor(background.R / 255.0f, background.G / 255.0f,
+                    background.B / 255.0f, background.A / 255.0f);
+                GL.Clear(ClearBufferMask.ColorBufferBit);
+                // Layer and animation values stay in the AET's native coordinate
+                // system. The view transform maps that fixed scene canvas into
+                // the current window, while this final projection maps window
+                // pixels to NDC. Keeping these two spaces separate is important:
+                // applying a window-space view to a scene-space projection clips
+                // every primitive.
+                int sceneWidth = mScene?.Width is > 0 ? mScene.Width : 1920;
+                int sceneHeight = mScene?.Height is > 0 ? mScene.Height : 1080;
+                var projection = Matrix4x4.CreateOrthographicOffCenter(0, ClientSize.Width,
+                    ClientSize.Height, 0, -1, 1);
+                float fit = MathF.Min(ClientSize.Width / (float)sceneWidth,
+                    ClientSize.Height / (float)sceneHeight) * mZoom;
+                var world = Matrix4x4.CreateScale(fit, fit, 1.0f) *
+                            Matrix4x4.CreateTranslation(
+                                (ClientSize.Width - sceneWidth * fit) * 0.5f + mPan.X,
+                                (ClientSize.Height - sceneHeight * fit) * 0.5f + mPan.Y, 0.0f);
+
+                mShader.Use();
+                mShader.SetUniform("uProjection", projection);
+                GL.ActiveTexture(TextureUnit.Texture0);
+                mShader.SetUniform("uTexture", 0);
+                GL.BindVertexArray(mVertexArray);
+                GL.Enable(EnableCap.Blend);
+                GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
+
+                if (mScene == null)
+                {
+                    GL.Disable(EnableCap.Blend);
+                    SwapBuffers();
+                    return;
+                }
+
+                mHitLayers.Clear();
+                int missing = 0;
+                var renderItems = new List<PreparedLayer>();
+                CollectLayers(mScene.Layers, Matrix4x4.Identity, 1.0f, mTime,
+                    ref missing, false, renderItems);
+                // The game flattens the active AET instances and sorts them by
+                // the exact resource-name string before drawing.  Child order
+                // in the file is therefore not the final painter's order.
+                foreach (var item in renderItems
+                    .OrderBy(value => value.SortKey, StringComparer.Ordinal)
+                    .ThenBy(value => value.Order))
+                {
+                    RenderLayer(item, world);
+                }
+                GL.Disable(EnableCap.Blend);
+                SwapBuffers();
+                FrameRendered?.Invoke(this, new AetFrameRenderEventArgs(mScene, missing,
+                    mHitLayers.Count));
+            }
+            catch (InvalidOperationException exception)
+            {
+                // During a WinForms resize the native child window can be
+                // temporarily unavailable. Skip that frame and let the next
+                // paint recreate the viewport instead of using a stale context.
+                Debug.WriteLine($"AET GL frame skipped: {exception.Message}");
+            }
+            catch (Exception exception)
+            {
+                // Keep a transient driver/context failure from escaping the
+                // WinForms paint callback and terminating the application.
+                Debug.WriteLine($"AET GL frame failed: {exception}");
+            }
+        }
+
+        private void CollectLayers(IEnumerable<FgoAetRenderLayer> layers, Matrix4x4 parent,
+            float inheritedOpacity, float time, ref int missing, bool highlightDescendants,
+            ICollection<PreparedLayer> output)
+        {
+            int order = output.Count;
+            foreach (var layer in layers)
+            {
+                if (!layer.Visible || !layer.Data.IsActive(time))
+                    continue;
+
+                var local = layer.EvaluateTransform(time, mScene.Duration, inheritedOpacity,
+                    out float opacity);
+                var transform = local * parent;
+                if (layer.IsComposition)
+                    CollectLayers(layer.Children, transform, opacity,
+                        layer.Data.ToLocalTime(time), ref missing,
+                        highlightDescendants || ReferenceEquals(mSelectedData, layer.Data), output);
+                else if (layer.IsAsset && layer.Resolution != null)
+                {
+                    string key = CreateResourceKey(layer.Resolution);
+                    if (!mAtlases.TryGetValue(key, out var atlas))
+                    {
+                        missing++;
+                        continue;
+                    }
+
+                    var rectangle = FgoSpriteBitmap.GetCropRectangle(layer.Resolution.Entry,
+                        atlas.Width, atlas.Height);
+                    if (rectangle.Width <= 0 || rectangle.Height <= 0)
+                    {
+                        missing++;
+                        continue;
+                    }
+
+                    output.Add(new PreparedLayer(layer, transform, opacity,
+                        highlightDescendants || ReferenceEquals(mSelectedData, layer.Data),
+                        GetSortKey(layer), order++));
+                }
+            }
+        }
+
+        private void RenderLayer(PreparedLayer item, Matrix4x4 world)
+        {
+            string key = CreateResourceKey(item.Layer.Resolution);
+            if (!mAtlases.TryGetValue(key, out var atlas))
+                return;
+
+            var rectangle = FgoSpriteBitmap.GetCropRectangle(item.Layer.Resolution.Entry,
+                atlas.Width, atlas.Height);
+            var uvRect = FgoSpriteBitmap.GetUvRectangle(rectangle, atlas.Width, atlas.Height);
+            var size = Matrix4x4.CreateScale(rectangle.Width, rectangle.Height, 1.0f);
+            var transform = size * item.Transform * world;
+            mShader.SetUniform("uTransform", transform);
+            mShader.SetUniform("uUvRect", uvRect);
+            float alpha = Math.Clamp(item.Opacity *
+                ((item.Layer.Target.Color >> 24) & 0xFF) / 255.0f, 0, 1);
+            mShader.SetUniform("uColor", item.Highlight
+                ? new Vector4(1.0f, 0.85f, 0.35f, alpha)
+                : new Vector4(1, 1, 1, alpha));
+            atlas.Texture.Bind();
+            GL.DrawElements(PrimitiveType.Triangles, 6, DrawElementsType.UnsignedInt, 0);
+            mHitLayers.Add(new HitLayer(item.Layer, transform,
+                rectangle.Width, rectangle.Height));
+        }
+
+        private static string GetSortKey(FgoAetRenderLayer layer) =>
+            layer.Target?.Sources.FirstOrDefault()?.Name ??
+            layer.Target?.Name ?? layer.Data.Name ?? string.Empty;
+
+        private HitLayer HitTest(Point point)
+        {
+            var scenePoint = new Vector2(point.X, point.Y);
+            for (int i = mHitLayers.Count - 1; i >= 0; i--)
+            {
+                var hit = mHitLayers[i];
+                if (!Matrix4x4.Invert(hit.Transform, out var inverse))
+                    continue;
+
+                var local = Vector2.Transform(scenePoint, inverse);
+                if (local.X >= 0 && local.X <= hit.Width &&
+                    local.Y >= 0 && local.Y <= hit.Height)
+                    return hit;
+            }
+
+            return null;
+        }
+
+        protected override void OnResize(EventArgs e)
+        {
+            base.OnResize(e);
+            // The viewport is set at the start of OnPaint. Avoid making the
+            // context current from WinForms' resize callback: GLControl may be
+            // recreating its native child window at exactly this point.
+            if (!mDisposing && IsHandleCreated)
+                Invalidate();
+        }
+
+        protected override void OnMouseWheel(MouseEventArgs e)
+        {
+            mZoom = Math.Clamp(mZoom * (e.Delta > 0 ? 1.1f : 0.9f), 0.05f, 20.0f);
+            Invalidate();
+            base.OnMouseWheel(e);
+        }
+
+        protected override void OnMouseDown(MouseEventArgs e)
+        {
+            Focus();
+            mPreviousMouse = e.Location;
+            mPanning = e.Button == MouseButtons.Middle || e.Button == MouseButtons.Right;
+            if (e.Button == MouseButtons.Left && !mPanning)
+            {
+                mSelectedLayer = HitTest(e.Location);
+                LayerSelected?.Invoke(this, mSelectedLayer?.Layer.Data.Name);
+                Invalidate();
+            }
+            base.OnMouseDown(e);
+        }
+
+        protected override void OnMouseMove(MouseEventArgs e)
+        {
+            if (mPanning)
+            {
+                mPan += new Vector2(e.X - mPreviousMouse.X, e.Y - mPreviousMouse.Y);
+                Invalidate();
+            }
+            mPreviousMouse = e.Location;
+            base.OnMouseMove(e);
+        }
+
+        protected override void OnMouseUp(MouseEventArgs e)
+        {
+            mPanning = false;
+            base.OnMouseUp(e);
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                bool canDisposeGl = TryMakeCurrent(allowDisposing: true);
+                mDisposing = true;
+                if (canDisposeGl)
+                {
+                    foreach (var atlas in mAtlases.Values)
+                        atlas.Texture.Dispose();
+                    mIndexBuffer?.Dispose();
+                    mVertexBuffer?.Dispose();
+                    if (mVertexArray != 0)
+                        GL.DeleteVertexArray(mVertexArray);
+                }
+
+                mAtlases.Clear();
+                mPendingResources = null;
+            }
+
+            base.Dispose(disposing);
+        }
+
+        private bool TryMakeCurrent(bool allowDisposing = false)
+        {
+            if (mDisposing || IsDisposed || (!allowDisposing && Disposing) ||
+                !IsHandleCreated || Context == null)
+                return false;
+
+            try
+            {
+                MakeCurrent();
+                return true;
+            }
+            catch (InvalidOperationException exception)
+            {
+                Debug.WriteLine($"AET GL context unavailable: {exception.Message}");
+                return false;
+            }
+        }
+
+        private static Color ToColor(uint value) => Color.FromArgb(
+            (int)((value >> 24) & 0xFF), (int)((value >> 16) & 0xFF),
+            (int)((value >> 8) & 0xFF), (int)(value & 0xFF));
+
+        private static string CreateResourceKey(FgoSpriteResolution resolution) => string.Join("\u001f",
+            resolution.Package.ArchivePath ?? resolution.Package.TablePath,
+            resolution.Entry.TextureIndex, resolution.Entry.TextureName,
+            resolution.Entry.AtlasWidth, resolution.Entry.AtlasHeight);
+
+    private sealed record GpuAetAtlas(GLTexture Texture, int Width, int Height);
+
+    private sealed record PreparedLayer(FgoAetRenderLayer Layer, Matrix4x4 Transform,
+        float Opacity, bool Highlight, string SortKey, int Order);
+
+    private sealed record HitLayer(FgoAetRenderLayer Layer, Matrix4x4 Transform,
+        int Width, int Height);
     }
 }

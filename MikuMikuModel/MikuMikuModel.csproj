@@ -10,7 +10,7 @@
     <ApplicationIcon>Resources\Icons\Application.ico</ApplicationIcon>
     <RuntimeIdentifiers>win-x86;win-x64</RuntimeIdentifiers>
     <NoWarn>1701;1702;8002</NoWarn>
-    <AssemblyVersion>2.2</AssemblyVersion>
+    <AssemblyVersion>0.1</AssemblyVersion>
   </PropertyGroup>
   
   <ItemGroup>
@@ -98,6 +98,12 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
     <None Update="Resources\Shaders\Default.vert">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="Resources\Shaders\Aet2D.frag">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="Resources\Shaders\Aet2D.vert">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
     <None Update="Resources\Shaders\Grid.frag">
