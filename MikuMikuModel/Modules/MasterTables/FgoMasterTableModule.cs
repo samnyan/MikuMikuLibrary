@@ -3,12 +3,12 @@ using MikuMikuLibrary.MasterTables;
 
 namespace MikuMikuModel.Modules.MasterTables;
 
-/// <summary>Import-only module for FGO Arcade's text master tables.</summary>
+/// <summary>Module for FGO Arcade's text master tables.</summary>
 public sealed class FgoMasterTableModule : FormatModule<FgoMasterTable>
 {
     public override IReadOnlyList<FormatExtension> Extensions { get; } = new[]
     {
-        new FormatExtension("FGO master table (key/value text)", "bin", FormatExtensionFlags.Import)
+        new FormatExtension("FGO master table (key/value text)", "bin", FormatExtensionFlags.Import | FormatExtensionFlags.Export)
     };
 
     public override bool Match(string fileName)
@@ -35,5 +35,5 @@ public sealed class FgoMasterTableModule : FormatModule<FgoMasterTable>
         BinaryFile.Load<FgoMasterTable>(source, true);
 
     protected override void ExportCore(FgoMasterTable model, Stream destination, string fileName) =>
-        throw new NotSupportedException("FGO master tables are read-only");
+        model.Save(destination, true);
 }

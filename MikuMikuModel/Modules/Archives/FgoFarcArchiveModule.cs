@@ -3,13 +3,13 @@ using MikuMikuLibrary.IO;
 
 namespace MikuMikuModel.Modules.Archives;
 
-/// <summary>Import-only module for FATE/Grand Order Arcade <c>FARc</c> archives.</summary>
+/// <summary>Module for FATE/Grand Order Arcade <c>FARc</c> archives.</summary>
 public sealed class FgoFarcArchiveModule : FormatModule<FgoFarcArchive>
 {
     /// <inheritdoc />
     public override IReadOnlyList<FormatExtension> Extensions { get; } = new[]
     {
-        new FormatExtension("FGO Arcade FArc Archive", "farc", FormatExtensionFlags.Import)
+        new FormatExtension("FGO Arcade FArc Archive", "farc", FormatExtensionFlags.Import | FormatExtensionFlags.Export)
     };
 
     /// <inheritdoc />
@@ -26,5 +26,5 @@ public sealed class FgoFarcArchiveModule : FormatModule<FgoFarcArchive>
 
     /// <inheritdoc />
     protected override void ExportCore(FgoFarcArchive model, Stream destination, string fileName) =>
-        throw new NotSupportedException("FGO Arcade FArc archives are import-only");
+        model.Save(destination, true);
 }

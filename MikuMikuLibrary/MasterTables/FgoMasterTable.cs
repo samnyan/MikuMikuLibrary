@@ -26,7 +26,7 @@ public sealed class FgoMasterTable : BinaryFile
 
     private readonly List<string> mColumns = new();
 
-    public override BinaryFileFlags Flags => BinaryFileFlags.Load;
+    public override BinaryFileFlags Flags => BinaryFileFlags.Load | BinaryFileFlags.Save;
     public override Endianness Endianness => Endianness.Little;
 
     public override void Read(EndianBinaryReader reader, ISection section = null)
@@ -41,7 +41,7 @@ public sealed class FgoMasterTable : BinaryFile
     }
 
     public override void Write(EndianBinaryWriter writer, ISection section = null) =>
-        throw new NotSupportedException("FGO master tables are read-only");
+        writer.Write(Encoding.UTF8.GetBytes(Text));
 
     /// <summary>Checks whether a stream looks like an FGO key/value master table.</summary>
     public static bool IsTextTable(Stream source)

@@ -9,6 +9,12 @@ public class SubTexture
     public TextureFormat Format { get; private set; }
     public byte[] Data { get; private set; }
 
+    /// <summary>
+    /// Gets the format identifier written to the source file. FGO Arcade uses
+    /// 130/131 for BC7 even though the common library format is 15.
+    /// </summary>
+    public int SerializedFormat { get; private set; }
+
     internal void Read(EndianBinaryReader reader)
     {
         int signature = reader.ReadInt32();
@@ -19,6 +25,7 @@ public class SubTexture
         Width = reader.ReadInt32();
         Height = reader.ReadInt32();
         int format = reader.ReadInt32();
+        SerializedFormat = format;
         // FGO Arcade stores BC7 textures with its title-specific format IDs
         // 130 and 131. Normalize them to the library's canonical BC7 value so
         // the native decoder does not treat the data as an unknown format.
@@ -34,7 +41,7 @@ public class SubTexture
         writer.Write(0x02505854);
         writer.Write(Width);
         writer.Write(Height);
-        writer.Write((int)Format);
+        writer.Write(SerializedFormat);
         writer.Write(id);
         writer.Write(Data.Length);
         writer.Write(Data);
@@ -50,6 +57,13 @@ public class SubTexture
         Width = Math.Max(1, width);
         Height = Math.Max(1, height);
         Format = format;
+        SerializedFormat = (int)format;
         Data = new byte[TextureFormatUtilities.CalculateDataSize(width, height, format)];
+    }
+
+    /// <summary>Preserves a source texture's on-disk format identifier.</summary>
+    public void PreserveSerializedFormat(SubTexture source)
+    {
+        SerializedFormat = source?.SerializedFormat ?? (int)Format;
     }
 }

@@ -1,4 +1,5 @@
 using MikuMikuLibrary.MasterTables;
+using MikuMikuLibrary.IO;
 using MikuMikuLibrary.Selection;
 using MikuMikuModel.GUI.Controls;
 using MikuMikuModel.Nodes.IO;
@@ -8,7 +9,7 @@ namespace MikuMikuModel.Nodes.MasterTables;
 
 public sealed class FgoMasterTableNode : BinaryFileNode<FgoMasterTable>
 {
-    public override NodeFlags Flags => NodeFlags.None;
+    public override NodeFlags Flags => NodeFlags.Replace;
     public override Bitmap Image => ResourceStore.LoadBitmap("Icons/File.png");
     public override Control Control => new FgoSelectionTableViewControl(Data);
 
@@ -16,6 +17,7 @@ public sealed class FgoMasterTableNode : BinaryFileNode<FgoMasterTable>
     {
         AddCustomHandler("Export", ExportText);
         AddCustomHandler("Export (JSON)", ExportJson);
+        AddReplaceHandler<FgoMasterTable>(BinaryFile.Load<FgoMasterTable>);
     }
 
     protected override void PopulateCore() { }

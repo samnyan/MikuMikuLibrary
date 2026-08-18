@@ -620,11 +620,20 @@ public abstract partial class Node<T> : INode where T : class
     protected virtual void OnMove(INode movedNode, int previousIndex, int newIndex) =>
         Moved?.Invoke(this, new NodeMoveEventArgs(movedNode, previousIndex, newIndex));
 
-    private void OnChildRenamed(object sender, NodeRenameEventArgs args) =>
+    private void OnChildRenamed(object sender, NodeRenameEventArgs args)
+    {
         IsPendingSynchronization = true;
+        OnPropertyChanged(nameof(Name));
+    }
 
-    private void OnChildReplaced(object sender, NodeReplaceEventArgs args) =>
+    private void OnChildReplaced(object sender, NodeReplaceEventArgs args)
+    {
+        // A replacement changes the backing collection just like an add or
+        // remove. Notify subscribers so IDirtyNode parents can mark the whole
+        // archive chain dirty before Save is invoked.
         IsPendingSynchronization = true;
+        OnPropertyChanged(nameof(NodeModifyFlags.Collection));
+    }
 
     protected abstract void Initialize();
     protected abstract void PopulateCore();

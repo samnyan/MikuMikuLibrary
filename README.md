@@ -2,8 +2,15 @@
 
 Format library and file editor for Hatsune Miku: Project DIVA games.
 
-This version also includes read-only FATE/Grand Order Arcade support for FARc
-archives, AET set files, Sprite tables, and atlas-backed Sprite previews.
+This version also includes FATE/Grand Order Arcade.
+
+## FGOAC Feature
+
+- FARc archive unpack/repack
+- FGO master table edit/export
+- Texture export/replace
+- Sprite table preview
+- AET preview (Not fully correct)
 
 # Building
 
@@ -68,9 +75,9 @@ A program that allows you to extract or create FARC files. MM+ CPK files are als
 
 The extractor auto-detects FATE/Grand Order Arcade `FARc` archives and uses
 `FgoFarcArchive`. DIVA `FArC` archives continue to use `FarcArchive`. FGO
-gzip/raw and chunked Zstandard entries can be extracted directly; encrypted
-encrypted entries still require a title-specific decoder and are not exposed
-by the generic extractor.
+raw, gzip, and chunked Zstandard entries can be extracted directly. The FGO
+archive implementation also handles the title's encrypted index and payload
+layout when the built-in title key applies.
 
 # Special thanks
 
