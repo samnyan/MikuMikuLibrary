@@ -1,3 +1,4 @@
+using MikuMikuModel.GUI.Controls;
 using MikuMikuModel.Resources;
 
 namespace MikuMikuModel.Nodes.IO;
@@ -15,6 +16,32 @@ public class StreamNode : Node<Stream>
 
     [Category("General")]
     public string FilePath { get; }
+
+    public override Control Control => IsTextPreview ? new StreamTextViewControl(this) : null;
+
+    private bool IsTextPreview
+    {
+        get
+        {
+            if (string.Equals(Path.GetExtension(Name), ".json", StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            var stream = Data;
+            if (!stream.CanSeek || stream.Length > 1024 * 1024)
+                return false;
+
+            stream.Seek(0, SeekOrigin.Begin);
+            int value;
+            while ((value = stream.ReadByte()) >= 0)
+            {
+                if (value == 0 || (value < 32 && value != 9 && value != 10 && value != 13))
+                    return false;
+            }
+
+            stream.Seek(0, SeekOrigin.Begin);
+            return true;
+        }
+    }
 
     protected override Stream InternalData
     {
