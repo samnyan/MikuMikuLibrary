@@ -18,12 +18,12 @@ public sealed class FgoSpriteResolution
         Entry = entry ?? throw new ArgumentNullException(nameof(entry));
     }
 }
-
 /// <summary>Scans FGO Sprite table files and resolves AET asset names.</summary>
 public sealed class FgoSpriteCatalog : IDisposable
 {
     private readonly Dictionary<string, List<FgoSpriteResolution>> mSprites =
         new(StringComparer.OrdinalIgnoreCase);
+
     private readonly List<FgoSpritePackage> mPackages;
 
     /// <summary>Gets the directory that was scanned.</summary>
@@ -117,6 +117,10 @@ public sealed class FgoSpriteCatalog : IDisposable
     public FgoSpriteResolution Resolve(FgoAetSource source)
     {
         ArgumentNullException.ThrowIfNull(source);
+        // The source display name carries the package-specific prefix used to
+        // disambiguate duplicate sprite labels. The path is only a fallback;
+        // Normalize(path) strips directories and would otherwise lose that
+        // package identity.
         return Resolve(source.Name) ?? Resolve(source.Path);
     }
 

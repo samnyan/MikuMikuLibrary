@@ -1,5 +1,6 @@
 using System.Numerics;
 using System.Threading;
+using System.ComponentModel;
 using MikuMikuLibrary.Aets;
 using MikuMikuLibrary.Aets.Resources;
 using MikuMikuModel.GUI.Controls.ModelView;
@@ -21,6 +22,7 @@ public sealed class AetScenePreviewControl : UserControl
     private readonly Button mPlayButton = new();
     private readonly TrackBar mFrameTrackBar = new();
     private readonly Label mFrameLabel = new();
+    private readonly CheckBox mShowCanvasBorder = new();
     private readonly FgoSpriteBitmapCache mBitmapCache = new();
     private readonly System.Windows.Forms.Timer mPlaybackTimer = new();
     private CancellationTokenSource mPrepareCancellation;
@@ -28,7 +30,9 @@ public sealed class AetScenePreviewControl : UserControl
     private FgoAetRecord mScene;
     private FgoAetRenderScene mRenderScene;
     private int mDuration;
+
     private float mFrameRate = 60.0f;
+
     // AET curves use seconds as their time coordinate. The track bar stores
     // integer frame numbers and is converted at the boundary.
     private float mCurrentTime;
@@ -37,6 +41,36 @@ public sealed class AetScenePreviewControl : UserControl
 
     /// <summary>Gets the shared AET preview instance.</summary>
     public static AetScenePreviewControl Instance => sInstance ??= new();
+
+    /// <summary>Gets the preview instance if it has already been created.</summary>
+    public static AetScenePreviewControl ExistingInstance => sInstance;
+
+    /// <summary>Gets the current composition time in seconds.</summary>
+    public float CurrentTime => mCurrentTime;
+
+    /// <summary>Gets the current composition frame number.</summary>
+    public float CurrentFrameNumber => mCurrentTime * mFrameRate;
+
+    /// <summary>Gets the active scene duration in seconds.</summary>
+    public float SceneDuration => mRenderScene?.Duration ?? 0.0f;
+
+    /// <summary>Gets the active scene frame rate.</summary>
+    public float SceneFrameRate => mFrameRate;
+
+    /// <summary>Raised when the selected AET frame changes.</summary>
+    public event EventHandler FrameChanged;
+
+    /// <summary>Resolves a layer's local time in the currently displayed scene.</summary>
+    public bool TryGetLayerTime(FgoAetChild layer, out float localTime)
+    {
+        if (mRenderScene == null)
+        {
+            localTime = 0.0f;
+            return false;
+        }
+
+        return mRenderScene.TryGetLayerTime(layer, mCurrentTime, out localTime);
+    }
 
     /// <summary>Requests a redraw after a layer visibility change.</summary>
     public void RefreshVisibility() => mView.Invalidate();
@@ -88,6 +122,7 @@ public sealed class AetScenePreviewControl : UserControl
         mPlaybackTimer.Interval = Math.Clamp((int)MathF.Round(1000.0f / mFrameRate), 1, 1000);
         UpdateFrameLabel();
         mView.SetScene(mRenderScene);
+        FrameChanged?.Invoke(this, EventArgs.Empty);
         PrepareResourcesAsync(mRenderScene);
     }
 
@@ -166,6 +201,7 @@ public sealed class AetScenePreviewControl : UserControl
     private static IEnumerable<FgoSpriteResolution> CollectResources(FgoAetRenderScene scene)
     {
         var resources = new Dictionary<string, FgoSpriteResolution>(StringComparer.Ordinal);
+
         void Visit(IEnumerable<FgoAetRenderLayer> layers)
         {
             foreach (var layer in layers)
@@ -206,9 +242,18 @@ public sealed class AetScenePreviewControl : UserControl
         mCurrentTime += 1.0f / mFrameRate;
         if (mCurrentTime > mRenderScene.Duration)
             mCurrentTime = 0.0f;
-        mFrameTrackBar.Value = Math.Clamp((int)MathF.Round(mCurrentTime * mFrameRate), 0, mDuration);
-        UpdateFrameLabel();
-        mView.SetFrame(mCurrentTime);
+        int frame = Math.Clamp((int)MathF.Round(mCurrentTime * mFrameRate), 0, mDuration);
+        bool frameAlreadySelected = mFrameTrackBar.Value == frame;
+        mFrameTrackBar.Value = frame;
+        // ValueChanged handles the common case. If rounding keeps the same
+        // trackbar value, still update the renderer and Inspector for the
+        // fractional time that advanced between two timer ticks.
+        if (frameAlreadySelected)
+        {
+            UpdateFrameLabel();
+            mView.SetFrame(mCurrentTime);
+            FrameChanged?.Invoke(this, EventArgs.Empty);
+        }
         mStatusLabel.Text = $"Frame {CurrentFrameNumber:0.##}/{mDuration}";
     }
 
@@ -220,11 +265,10 @@ public sealed class AetScenePreviewControl : UserControl
         mCurrentTime = mFrameTrackBar.Value / mFrameRate;
         UpdateFrameLabel();
         mView.SetFrame(mCurrentTime);
+        FrameChanged?.Invoke(this, EventArgs.Empty);
         if (!mPlaying)
             mStatusLabel.Text = $"Frame {CurrentFrameNumber:0.##}/{mDuration}";
     }
-
-    private float CurrentFrameNumber => mCurrentTime * mFrameRate;
 
     private void UpdateFrameLabel() => mFrameLabel.Text = $"Frame {CurrentFrameNumber:0.##}/{mDuration}";
 
@@ -268,6 +312,7 @@ public sealed class AetScenePreviewControl : UserControl
             mPlayButton.Dispose();
             mFrameTrackBar.Dispose();
             mFrameLabel.Dispose();
+            mShowCanvasBorder.Dispose();
             mStatusLabel.Dispose();
         }
 
@@ -307,6 +352,14 @@ public sealed class AetScenePreviewControl : UserControl
         mFrameLabel.TextAlign = ContentAlignment.MiddleRight;
         mFrameLabel.Dock = DockStyle.Right;
 
+        mShowCanvasBorder.AutoSize = false;
+        mShowCanvasBorder.Width = 145;
+        mShowCanvasBorder.Text = "Show canvas border";
+        mShowCanvasBorder.TextAlign = ContentAlignment.MiddleLeft;
+        mShowCanvasBorder.Dock = DockStyle.Right;
+        mShowCanvasBorder.CheckedChanged += (sender, args) =>
+            mView.ShowCanvasBorder = mShowCanvasBorder.Checked;
+
         mFrameTrackBar.Minimum = 0;
         mFrameTrackBar.Maximum = 1;
         mFrameTrackBar.TickStyle = TickStyle.None;
@@ -318,6 +371,7 @@ public sealed class AetScenePreviewControl : UserControl
         mTimelinePanel.Padding = new Padding(4, 0, 4, 0);
         mTimelinePanel.Controls.Add(mFrameTrackBar);
         mTimelinePanel.Controls.Add(mFrameLabel);
+        mTimelinePanel.Controls.Add(mShowCanvasBorder);
         mTimelinePanel.Controls.Add(mPlayButton);
 
         mPlaybackTimer.Interval = 33;
@@ -337,7 +391,7 @@ public sealed class AetScenePreviewControl : UserControl
             mStatusLabel.ForeColor = args.MissingAssets > 0 ? Color.DarkOrange : Color.DarkGreen;
             if (!mPlaying)
                 mStatusLabel.Text = $"Frame {CurrentFrameNumber:0.##}/{mDuration} · " +
-                    $"sprites {args.RenderedAssets}, missing {args.MissingAssets}";
+                                    $"sprites {args.RenderedAssets}, missing {args.MissingAssets}";
         }
     }
 
@@ -349,7 +403,9 @@ public sealed class AetScenePreviewControl : UserControl
         public int MissingAssets { get; }
         public int RenderedAssets { get; }
 
-        public AetFrameRenderEventArgs(FgoAetRenderScene scene, int missingAssets,
+        public AetFrameRenderEventArgs(
+            FgoAetRenderScene scene,
+            int missingAssets,
             int renderedAssets)
         {
             Scene = scene;
@@ -363,9 +419,12 @@ public sealed class AetScenePreviewControl : UserControl
         private readonly Dictionary<string, GpuAetAtlas> mAtlases = new(StringComparer.Ordinal);
         private readonly List<HitLayer> mHitLayers = new();
         private GLShaderProgram mShader;
+        private GLShaderProgram mCanvasShader;
         private GLBuffer<float> mVertexBuffer;
         private GLBuffer<uint> mIndexBuffer;
+        private GLBuffer<float> mCanvasVertexBuffer;
         private int mVertexArray;
+        private int mCanvasVertexArray;
         private FgoAetRenderScene mScene;
         private float mTime;
         private float mZoom = 1.0f;
@@ -377,10 +436,26 @@ public sealed class AetScenePreviewControl : UserControl
         private bool mLoaded;
         private bool mDisposing;
         private Dictionary<string, PreparedAetAtlas> mPendingResources;
+        private bool mShowCanvasBorder;
 
         public event EventHandler<AetFrameRenderEventArgs> FrameRendered;
         public event EventHandler<string> LayerSelected;
         public event EventHandler<string> RenderUnavailable;
+
+        [Browsable(false)]
+        [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+        public bool ShowCanvasBorder
+        {
+            get => mShowCanvasBorder;
+            set
+            {
+                if (mShowCanvasBorder == value)
+                    return;
+
+                mShowCanvasBorder = value;
+                Invalidate();
+            }
+        }
 
         public AetSceneGLView() : base(new GLControlSettings { NumberOfSamples = 2 })
         {
@@ -445,6 +520,7 @@ public sealed class AetScenePreviewControl : UserControl
             // child window. Constructing it in the WinForms constructor can
             // run before a valid context exists.
             mShader = GLShaderProgram.Create("Aet2D");
+            mCanvasShader = GLShaderProgram.Create("AetCanvas");
             mLoaded = mShader != null;
             if (!mLoaded)
             {
@@ -454,8 +530,11 @@ public sealed class AetScenePreviewControl : UserControl
             mVertexArray = GL.GenVertexArray();
             GL.BindVertexArray(mVertexArray);
             mVertexBuffer = new GLBuffer<float>(BufferTarget.ArrayBuffer,
-                new[] { 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 1.0f, 0.0f,
-                    1.0f, 1.0f, 1.0f, 1.0f, 0.0f, 1.0f, 0.0f, 1.0f },
+                new[]
+                {
+                    0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 1.0f, 0.0f,
+                    1.0f, 1.0f, 1.0f, 1.0f, 0.0f, 1.0f, 0.0f, 1.0f
+                },
                 BufferUsageHint.StaticDraw);
             mIndexBuffer = new GLBuffer<uint>(BufferTarget.ElementArrayBuffer,
                 new[] { 0u, 1u, 2u, 0u, 2u, 3u }, BufferUsageHint.StaticDraw);
@@ -465,6 +544,25 @@ public sealed class AetScenePreviewControl : UserControl
             GL.VertexAttribPointer(1, 2, VertexAttribPointerType.Float, false, 4 * sizeof(float), 2 * sizeof(float));
             GL.EnableVertexAttribArray(1);
             mIndexBuffer.Bind();
+
+            // The border is drawn in the same scene coordinate space as the
+            // sprites, so it remains aligned while the view is fitted, zoomed
+            // or panned.  A separate VAO/shader keeps the textured sprite
+            // vertex state untouched.
+            if (mCanvasShader != null)
+            {
+                mCanvasVertexArray = GL.GenVertexArray();
+                GL.BindVertexArray(mCanvasVertexArray);
+                mCanvasVertexBuffer = new GLBuffer<float>(BufferTarget.ArrayBuffer,
+                    new[] { 0.0f, 0.0f, 1.0f, 0.0f, 1.0f, 1.0f, 0.0f, 1.0f },
+                    BufferUsageHint.StaticDraw);
+                mCanvasVertexBuffer.Bind();
+                GL.VertexAttribPointer(0, 2, VertexAttribPointerType.Float, false,
+                    2 * sizeof(float), 0);
+                GL.EnableVertexAttribArray(0);
+            }
+
+            GL.BindVertexArray(mVertexArray);
             UploadResources();
         }
 
@@ -584,16 +682,18 @@ public sealed class AetScenePreviewControl : UserControl
                 int missing = 0;
                 var renderItems = new List<PreparedLayer>();
                 CollectLayers(mScene.Layers, Matrix4x4.Identity, 1.0f, mTime,
-                    ref missing, false, renderItems);
-                // The game flattens the active AET instances and sorts them by
-                // the exact resource-name string before drawing.  Child order
-                // in the file is therefore not the final painter's order.
-                foreach (var item in renderItems
-                    .OrderBy(value => value.SortKey, StringComparer.Ordinal)
-                    .ThenBy(value => value.Order))
+                    mScene.Duration, ref missing, false, renderItems);
+                // Native stores the flattened AET instances in reverse child
+                // index order: the last record in the file (the GameOver
+                // background) is runtime index 0 and is drawn first.  Walk
+                // the flattened source-order list backwards so backgrounds
+                // stay behind text/effects.
+                for (int i = renderItems.Count - 1; i >= 0; i--)
                 {
-                    RenderLayer(item, world);
+                    RenderLayer(renderItems[i], world);
                 }
+                if (mShowCanvasBorder)
+                    RenderCanvasBorder(world, sceneWidth, sceneHeight);
                 GL.Disable(EnableCap.Blend);
                 SwapBuffers();
                 FrameRendered?.Invoke(this, new AetFrameRenderEventArgs(mScene, missing,
@@ -614,23 +714,44 @@ public sealed class AetScenePreviewControl : UserControl
             }
         }
 
-        private void CollectLayers(IEnumerable<FgoAetRenderLayer> layers, Matrix4x4 parent,
-            float inheritedOpacity, float time, ref int missing, bool highlightDescendants,
+        private void CollectLayers(
+            IEnumerable<FgoAetRenderLayer> layers,
+            Matrix4x4 parent,
+            float inheritedOpacity,
+            float time,
+            float compositionDuration,
+            ref int missing,
+            bool highlightDescendants,
             ICollection<PreparedLayer> output)
         {
-            int order = output.Count;
             foreach (var layer in layers)
             {
                 if (!layer.Visible || !layer.Data.IsActive(time))
                     continue;
 
-                var local = layer.EvaluateTransform(time, mScene.Duration, inheritedOpacity,
+                var local = layer.EvaluateTransform(time, compositionDuration, inheritedOpacity,
                     out float opacity);
-                var transform = local * parent;
+                // FGO keeps AE's ParentIndex relationship separately from a
+                // nested Composition link. Resolve the complete parent chain
+                // at the same local composition time before applying the
+                // current layer transform. Parent opacity is intentionally not
+                // inherited here; the game combines the parent matrix and
+                // opacity through separate paths.
+                var inheritedTransform = EvaluateParentTransform(layer, parent, time,
+                    compositionDuration);
+                // Native stores column-vector affine matrices and computes
+                // parent * local. System.Numerics composes row vectors, so the
+                // equivalent order is local * parent.
+                var transform = local * inheritedTransform;
                 if (layer.IsComposition)
+                {
+                    float childDuration = layer.Target?.Duration is > 0.0f
+                        ? layer.Target.Duration
+                        : compositionDuration;
                     CollectLayers(layer.Children, transform, opacity,
-                        layer.Data.ToLocalTime(time), ref missing,
+                        layer.Data.ToLocalTime(time), childDuration, ref missing,
                         highlightDescendants || ReferenceEquals(mSelectedData, layer.Data), output);
+                }
                 else if (layer.IsAsset && layer.Resolution != null)
                 {
                     string key = CreateResourceKey(layer.Resolution);
@@ -648,10 +769,53 @@ public sealed class AetScenePreviewControl : UserControl
                         continue;
                     }
 
+                    var logicalSize = layer.LogicalSpriteSize;
+                    int spriteWidth = logicalSize.Width > 0
+                        ? logicalSize.Width
+                        : rectangle.Width;
+                    int spriteHeight = logicalSize.Height > 0
+                        ? logicalSize.Height
+                        : rectangle.Height;
+
                     output.Add(new PreparedLayer(layer, transform, opacity,
                         highlightDescendants || ReferenceEquals(mSelectedData, layer.Data),
-                        GetSortKey(layer), order++));
+                        spriteWidth, spriteHeight));
                 }
+            }
+        }
+
+        private Matrix4x4 EvaluateParentTransform(
+            FgoAetRenderLayer layer,
+            Matrix4x4 compositionParent,
+            float time,
+            float compositionDuration)
+        {
+            return EvaluateParentTransform(layer, compositionParent, time, compositionDuration,
+                new HashSet<FgoAetRenderLayer>());
+        }
+
+        private Matrix4x4 EvaluateParentTransform(
+            FgoAetRenderLayer layer,
+            Matrix4x4 compositionParent,
+            float time,
+            float compositionDuration,
+            ISet<FgoAetRenderLayer> visiting)
+        {
+            var parentLayer = layer.Parent;
+            if (parentLayer == null || !visiting.Add(layer))
+                return compositionParent;
+
+            try
+            {
+                var parentTransform = parentLayer.EvaluateTransform(time,
+                    compositionDuration, 1.0f, out _);
+                var inherited = EvaluateParentTransform(parentLayer,
+                    compositionParent, time, compositionDuration, visiting);
+                return parentTransform * inherited;
+            }
+            finally
+            {
+                visiting.Remove(layer);
             }
         }
 
@@ -664,10 +828,12 @@ public sealed class AetScenePreviewControl : UserControl
             var rectangle = FgoSpriteBitmap.GetCropRectangle(item.Layer.Resolution.Entry,
                 atlas.Width, atlas.Height);
             var uvRect = FgoSpriteBitmap.GetUvRectangle(rectangle, atlas.Width, atlas.Height);
-            var size = Matrix4x4.CreateScale(rectangle.Width, rectangle.Height, 1.0f);
+            var size = Matrix4x4.CreateScale(item.Width, item.Height, 1.0f);
             var transform = size * item.Transform * world;
             mShader.SetUniform("uTransform", transform);
             mShader.SetUniform("uUvRect", uvRect);
+            mShader.SetUniform("uUvRotated", item.Layer.Resolution.Entry.X0 >
+                                             item.Layer.Resolution.Entry.X1);
             float alpha = Math.Clamp(item.Opacity *
                 ((item.Layer.Target.Color >> 24) & 0xFF) / 255.0f, 0, 1);
             mShader.SetUniform("uColor", item.Highlight
@@ -676,12 +842,25 @@ public sealed class AetScenePreviewControl : UserControl
             atlas.Texture.Bind();
             GL.DrawElements(PrimitiveType.Triangles, 6, DrawElementsType.UnsignedInt, 0);
             mHitLayers.Add(new HitLayer(item.Layer, transform,
-                rectangle.Width, rectangle.Height));
+                item.Width, item.Height));
         }
 
-        private static string GetSortKey(FgoAetRenderLayer layer) =>
-            layer.Target?.Sources.FirstOrDefault()?.Name ??
-            layer.Target?.Name ?? layer.Data.Name ?? string.Empty;
+        private void RenderCanvasBorder(Matrix4x4 world, int sceneWidth, int sceneHeight)
+        {
+            if (mCanvasShader == null || mCanvasVertexArray == 0)
+                return;
+
+            mCanvasShader.Use();
+            mCanvasShader.SetUniform("uProjection", Matrix4x4.CreateOrthographicOffCenter(
+                0, ClientSize.Width, ClientSize.Height, 0, -1, 1));
+            mCanvasShader.SetUniform("uTransform",
+                Matrix4x4.CreateScale(sceneWidth, sceneHeight, 1.0f) * world);
+            mCanvasShader.SetUniform("uColor", new Vector4(0.15f, 0.75f, 1.0f, 0.95f));
+            GL.BindVertexArray(mCanvasVertexArray);
+            GL.LineWidth(2.0f);
+            GL.DrawArrays(PrimitiveType.LineLoop, 0, 4);
+            GL.BindVertexArray(mVertexArray);
+        }
 
         private HitLayer HitTest(Point point)
         {
@@ -761,8 +940,11 @@ public sealed class AetScenePreviewControl : UserControl
                         atlas.Texture.Dispose();
                     mIndexBuffer?.Dispose();
                     mVertexBuffer?.Dispose();
+                    mCanvasVertexBuffer?.Dispose();
                     if (mVertexArray != 0)
                         GL.DeleteVertexArray(mVertexArray);
+                    if (mCanvasVertexArray != 0)
+                        GL.DeleteVertexArray(mCanvasVertexArray);
                 }
 
                 mAtlases.Clear();
@@ -799,12 +981,20 @@ public sealed class AetScenePreviewControl : UserControl
             resolution.Entry.TextureIndex, resolution.Entry.TextureName,
             resolution.Entry.AtlasWidth, resolution.Entry.AtlasHeight);
 
-    private sealed record GpuAetAtlas(GLTexture Texture, int Width, int Height);
+        private sealed record GpuAetAtlas(GLTexture Texture, int Width, int Height);
 
-    private sealed record PreparedLayer(FgoAetRenderLayer Layer, Matrix4x4 Transform,
-        float Opacity, bool Highlight, string SortKey, int Order);
+        private sealed record PreparedLayer(
+            FgoAetRenderLayer Layer,
+            Matrix4x4 Transform,
+            float Opacity,
+            bool Highlight,
+            int Width,
+            int Height);
 
-    private sealed record HitLayer(FgoAetRenderLayer Layer, Matrix4x4 Transform,
-        int Width, int Height);
+        private sealed record HitLayer(
+            FgoAetRenderLayer Layer,
+            Matrix4x4 Transform,
+            int Width,
+            int Height);
     }
 }

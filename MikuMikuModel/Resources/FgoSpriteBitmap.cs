@@ -14,8 +14,11 @@ public static class FgoSpriteBitmap
     /// <param name="resolution">The resolved resource, or <see langword="null"/>.</param>
     /// <param name="bitmap">The cropped bitmap, or <see langword="null"/>.</param>
     /// <returns><see langword="true"/> when the resource was resolved and cropped.</returns>
-    public static bool TryResolveAndCrop(string path, string name,
-        out FgoSpriteResolution resolution, out Bitmap bitmap)
+    public static bool TryResolveAndCrop(
+        string path,
+        string name,
+        out FgoSpriteResolution resolution,
+        out Bitmap bitmap)
     {
         resolution = AetResourceContext.Instance.Resolve(path, name);
         bitmap = null;

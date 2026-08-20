@@ -52,6 +52,7 @@ public sealed class FgoAetSet : BinaryFile
             int chunk = stream.Read(bytes, read, bytes.Length - read);
             if (chunk == 0)
                 throw new EndOfStreamException();
+
             read += chunk;
         }
 
@@ -158,10 +159,15 @@ public sealed class FgoAetSet : BinaryFile
                     Name = data.StringAt(data.Relative(childRecordOffset, data.I32(childRecordOffset))),
                     PropertyOffset = data.Relative(childRecordOffset + 4, data.I32(childRecordOffset + 4)),
                     PropertyName = data.StringAt(data.Relative(childRecordOffset + 4, data.I32(childRecordOffset + 4))),
-                    ParentIndex = data.I32(childRecordOffset + 8),
+                    // Offset +20 is the raw parent/sentinel slot.  In the
+                    // FGO exports examined so far it is -1 for every layer;
+                    // offset +8 is the exporter flags/value field (values
+                    // such as 7, 135 and 0x807 are common) and must not be
+                    // interpreted as a parent index.
+                    ParentIndex = data.I32(childRecordOffset + 20),
                     Flags = data.U32(childRecordOffset + 12),
                     Value0 = data.I32(childRecordOffset + 16),
-                    Value1 = data.I32(childRecordOffset + 20),
+                    Value1 = data.I32(childRecordOffset + 8),
                     Kind = data.U32(childRecordOffset + 24),
                     Opacity = data.Float(childRecordOffset + 28),
                     Scale = data.Float(childRecordOffset + 32),
@@ -233,7 +239,8 @@ public sealed class FgoAetSet : BinaryFile
 
             var values = new List<float>();
             for (int position = candidateOffset + 8;
-                 position < candidateOffset + 8 + keyCount * 16; position += 4)
+                 position < candidateOffset + 8 + keyCount * 16;
+                 position += 4)
             {
                 float value = data.Float(position);
                 if (!float.IsFinite(value))
@@ -249,8 +256,8 @@ public sealed class FgoAetSet : BinaryFile
                 break;
 
             result.Add(new FgoAetProperty(name, checked((int)keyCount), values));
-            // The exporter appends an eight-byte trailer to every property
-            // entry (also for one-key/static values).
+            // valueEnd includes the eight-byte exporter trailer:
+            // 8-byte property header + key payload + 8-byte trailer.
             candidateOffset = checked((int)valueEnd);
         }
 
@@ -291,9 +298,11 @@ public sealed class FgoAetSet : BinaryFile
         {
             if (relative == 0)
                 return 0;
+
             long target = (long)fieldOffset + relative;
             if (target < 0 || target > int.MaxValue)
                 throw new InvalidDataException("FGO AET relative pointer is outside the file.");
+
             CheckRange((int)target, 1);
             return (int)target;
         }
@@ -302,12 +311,14 @@ public sealed class FgoAetSet : BinaryFile
         {
             if (offset == 0)
                 return string.Empty;
+
             CheckRange(offset, 1);
             int end = offset;
             while (end < mData.Length && mData[end] != 0)
                 end++;
             if (end == mData.Length)
                 throw new InvalidDataException("Unterminated FGO AET string.");
+
             return Encoding.UTF8.GetString(mData, offset, end - offset);
         }
 
@@ -360,14 +371,12 @@ public sealed class FgoAetSet : BinaryFile
         }
     }
 }
-
 public enum FgoAetRecordType : byte
 {
     Empty = 0,
     Scene = 1,
     Asset = 2
 }
-
 public sealed class FgoAetRecord
 {
     public int Index { get; internal set; }
@@ -393,7 +402,6 @@ public sealed class FgoAetRecord
     public List<FgoAetChild> Children { get; } = new();
     public List<FgoAetSource> Sources { get; } = new();
 }
-
 public sealed class FgoAetChild
 {
     public int Index { get; internal set; }
@@ -456,9 +464,27 @@ public sealed class FgoAetChild
     /// <summary>Evaluates a named ADBE transform property at a time in seconds.</summary>
     public float EvaluateProperty(string name, float time, float fallback, float duration)
     {
-        var property = Properties.FirstOrDefault(value =>
-            value.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+        var property = FindProperty(name);
         return property?.Evaluate(time, fallback, duration) ?? fallback;
+    }
+
+    private FgoAetProperty FindProperty(string name) => Properties.FirstOrDefault(value =>
+        value.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+
+    // AE exports Scale and Opacity in percent units (100 = 1.0). The native
+    // FGO loader applies a 0.01 conversion while constructing each curve.
+    private float EvaluatePercentProperty(
+        string name,
+        float fallback,
+        float time,
+        float duration)
+    {
+        var property = FindProperty(name);
+        if (property == null)
+            return fallback;
+
+        float value = property.Evaluate(time, fallback * 100.0f, duration);
+        return float.IsFinite(value) ? value * 0.01f : fallback;
     }
 
     /// <summary>Gets the animated X position, falling back to the static export fields.</summary>
@@ -511,21 +537,20 @@ public sealed class FgoAetChild
 
     /// <summary>Gets the animated opacity, falling back to full opacity.</summary>
     public float EvaluateOpacity(float time, float duration) =>
-        EvaluateProperty("ADBE Opacity", time, 1.0f, duration);
+        EvaluatePercentProperty("ADBE Opacity", 1.0f, time, duration);
 
     /// <summary>Gets the animated X scale, falling back to one.</summary>
     public float EvaluateScaleX(float time, float duration) =>
-        EvaluateProperty("ADBE Scale_0", time, StaticScale, duration);
+        EvaluatePercentProperty("ADBE Scale_0", StaticScale, time, duration);
 
     /// <summary>Gets the animated Y scale, falling back to one.</summary>
     public float EvaluateScaleY(float time, float duration) =>
-        EvaluateProperty("ADBE Scale_1", time, StaticScale, duration);
+        EvaluatePercentProperty("ADBE Scale_1", StaticScale, time, duration);
 
     /// <summary>Gets the animated Z scale used by 3D AET layers.</summary>
     public float EvaluateScaleZ(float time, float duration) =>
-        EvaluateProperty("ADBE Scale_2", time, StaticScale, duration);
+        EvaluatePercentProperty("ADBE Scale_2", StaticScale, time, duration);
 }
-
 /// <summary>One parsed ADBE property attached to an FGO AET layer.</summary>
 public sealed class FgoAetProperty
 {
@@ -553,6 +578,9 @@ public sealed class FgoAetProperty
             return Values[0];
 
         // Animated blocks are emitted as time/value/tangent quadruples.
+        // The sample stores both property keys and layer clocks in seconds;
+        // native converts both to frames before sampling, which is equivalent
+        // to evaluating both sides in seconds here.
         // Only use that interpretation when time values are monotonic and fit
         // the owning scene; otherwise use the first/last value envelope.
         if (Values.Count >= 4 && Values.Count % 4 == 0)
@@ -607,7 +635,6 @@ public sealed class FgoAetProperty
         return Values.Count >= 2 ? Values[1] : Values[0];
     }
 }
-
 public sealed class FgoAetSource
 {
     public int Index { get; internal set; }

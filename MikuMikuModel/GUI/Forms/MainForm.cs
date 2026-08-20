@@ -27,12 +27,15 @@ namespace MikuMikuModel.GUI.Forms;
 public partial class MainForm : Form
 {
     private readonly StringBuilder mStringBuilder = new();
+
     private readonly ToolStripMenuItem mSetAetResourceDirectoryToolStripMenuItem =
         new("Set AET resource directory...");
+
     private readonly ToolStripMenuItem mClearAetResourceDirectoryToolStripMenuItem =
         new("Clear AET resource directory");
 
     private Control mControl;
+    private AetScenePreviewControl mAetPreviewControl;
 
     private string mCurrentlyOpenFilePath;
 
@@ -127,6 +130,12 @@ public partial class MainForm : Form
 
     private void SetSplitContainerControl(Control control)
     {
+        if (mAetPreviewControl != null && !ReferenceEquals(mAetPreviewControl, control))
+        {
+            mAetPreviewControl.FrameChanged -= OnAetFrameChanged;
+            mAetPreviewControl = null;
+        }
+
         if (mMainSplitContainer.Panel1.Controls.Count == 0 && control == null)
             return;
 
@@ -144,7 +153,16 @@ public partial class MainForm : Form
         mControl = control;
         mControl.Dock = DockStyle.Fill;
         mMainSplitContainer.Panel1.Controls.Add(mControl);
+
+        if (control is AetScenePreviewControl aetPreview)
+        {
+            mAetPreviewControl = aetPreview;
+            mAetPreviewControl.FrameChanged += OnAetFrameChanged;
+            mPropertyGrid.Refresh();
+        }
     }
+
+    private void OnAetFrameChanged(object sender, EventArgs e) => mPropertyGrid.Refresh();
 
     private void RefreshNodeControls()
     {
@@ -794,7 +812,7 @@ public partial class MainForm : Form
     {
         using var folderDialog = new VistaFolderBrowserDialog
         {
-            Description = "Select a folder to convert all object sets inside.", 
+            Description = "Select a folder to convert all object sets inside.",
             UseDescriptionForTitle = true,
         };
 
@@ -971,6 +989,8 @@ public partial class MainForm : Form
             mComponents?.Dispose();
             ModelViewControl.DisposeInstance();
             TextureViewControl.DisposeInstance();
+            if (mAetPreviewControl != null)
+                mAetPreviewControl.FrameChanged -= OnAetFrameChanged;
             AetResourceContext.Instance.Changed -= OnAetResourceContextChanged;
             AetResourceContext.Instance.Dispose();
             StyleSet.StyleChanged -= OnStyleChanged;

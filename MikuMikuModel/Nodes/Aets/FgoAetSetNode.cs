@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Text.Json;
 using MikuMikuLibrary.Aets;
 using MikuMikuLibrary.Aets.Resources;
 using MikuMikuModel.GUI.Controls;
@@ -43,7 +44,6 @@ public sealed class FgoAetSetNode : BinaryFileNode<FgoAetSet>
     {
     }
 }
-
 public sealed class FgoAetRecordNode : Node<FgoAetRecord>
 {
     private readonly FgoAetSet mSet;
@@ -129,9 +129,13 @@ public sealed class FgoAetRecordNode : Node<FgoAetRecord>
         return AetScenePreviewControl.Instance;
     }
 }
-
 public sealed class FgoAetChildNode : Node<FgoAetChild>
 {
+    private static readonly JsonSerializerOptions sTimelineJsonOptions = new()
+    {
+        WriteIndented = true
+    };
+
     private readonly FgoAetSet mSet;
     private readonly FgoAetRecord mScene;
     private bool mIsComposition;
@@ -162,7 +166,7 @@ public sealed class FgoAetChildNode : Node<FgoAetChild>
         ? ResourceStore.LoadBitmap("Icons/Texture.png")
         : IsComposition
             ? ResourceStore.LoadBitmap("Icons/Folder.png")
-        : base.Image;
+            : base.Image;
 
     private bool IsSprite => Data.Name.EndsWith(".pic", StringComparison.OrdinalIgnoreCase);
 
@@ -225,6 +229,79 @@ public sealed class FgoAetChildNode : Node<FgoAetChild>
 
     [Category("Animation")]
     public int PropertyCount => Data.Properties.Count;
+
+    [Category("Current Frame")]
+    public string PreviewStatus => TryGetCurrentLocalTime(out _)
+        ? "Resolved"
+        : "Preview not active";
+
+    [Category("Current Frame")]
+    public float CurrentFrame => AetScenePreviewControl.ExistingInstance?.CurrentFrameNumber ?? 0.0f;
+
+    [Category("Current Frame")]
+    public float CurrentTime => AetScenePreviewControl.ExistingInstance?.CurrentTime ?? 0.0f;
+
+    [Category("Current Frame")]
+    public float LocalTime => GetCurrentLocalTime();
+
+    [Category("Current Frame")]
+    public bool Active => Data.IsActive(LocalTime);
+
+    [Category("Current Frame")]
+    public float PositionX => Data.EvaluatePositionX(LocalTime, CurrentDuration);
+
+    [Category("Current Frame")]
+    public float PositionY => Data.EvaluatePositionY(LocalTime, CurrentDuration);
+
+    [Category("Current Frame")]
+    public float PositionZ => Data.EvaluatePositionZ(LocalTime, CurrentDuration);
+
+    [Category("Current Frame")]
+    public float AnchorX => Data.EvaluateAnchorX(LocalTime, CurrentDuration);
+
+    [Category("Current Frame")]
+    public float AnchorY => Data.EvaluateAnchorY(LocalTime, CurrentDuration);
+
+    [Category("Current Frame")]
+    public float AnchorZ => Data.EvaluateAnchorZ(LocalTime, CurrentDuration);
+
+    [Category("Current Frame")]
+    public float RotationX => Data.EvaluateRotationX(LocalTime, CurrentDuration);
+
+    [Category("Current Frame")]
+    public float RotationY => Data.EvaluateRotationY(LocalTime, CurrentDuration);
+
+    [Category("Current Frame")]
+    public float RotationZ => Data.EvaluateRotation(LocalTime, CurrentDuration);
+
+    [Category("Current Frame")]
+    public float OrientationX => Data.EvaluateOrientationX(LocalTime, CurrentDuration);
+
+    [Category("Current Frame")]
+    public float OrientationY => Data.EvaluateOrientationY(LocalTime, CurrentDuration);
+
+    [Category("Current Frame")]
+    public float OrientationZ => Data.EvaluateOrientationZ(LocalTime, CurrentDuration);
+
+    [Category("Current Frame")]
+    public float ScaleX => FgoAetRenderLayer.NormalizeScale(
+        Data.EvaluateScaleX(LocalTime, CurrentDuration));
+
+    [Category("Current Frame")]
+    public float ScaleY => FgoAetRenderLayer.NormalizeScale(
+        Data.EvaluateScaleY(LocalTime, CurrentDuration));
+
+    [Category("Current Frame")]
+    public float ScaleZ => FgoAetRenderLayer.NormalizeScale(
+        Data.EvaluateScaleZ(LocalTime, CurrentDuration));
+
+    [Category("Current Frame")]
+    public float Opacity => FgoAetRenderLayer.NormalizeOpacity(
+        Data.EvaluateOpacity(LocalTime, CurrentDuration));
+
+    [Category("Timeline")]
+    public string KeyframesJson => JsonSerializer.Serialize(
+        Data.Properties.Select(CreateTimelineProperty), sTimelineJsonOptions);
 
     [Category("Asset")]
     public string ResourceStatus => !IsSprite ? string.Empty : Resolution == null ? "Not found" : "Resolved";
@@ -299,7 +376,11 @@ public sealed class FgoAetChildNode : Node<FgoAetChild>
         }
     }
 
-    public FgoAetChildNode(string name, FgoAetChild data, FgoAetSet set, FgoAetRecord owner,
+    public FgoAetChildNode(
+        string name,
+        FgoAetChild data,
+        FgoAetSet set,
+        FgoAetRecord owner,
         FgoAetRecord scene = null) : base(name, data)
     {
         mSet = set ?? throw new ArgumentNullException(nameof(set));
@@ -308,8 +389,61 @@ public sealed class FgoAetChildNode : Node<FgoAetChild>
         mIsComposition = set.Records.FirstOrDefault(record => record.Index == (int)data.Kind)?.Type ==
                          FgoAetRecordType.Scene;
     }
-}
 
+    private float CurrentDuration => Math.Max(
+        AetScenePreviewControl.ExistingInstance?.SceneDuration ?? 0.0f, Data.LayerDuration);
+
+    private float GetCurrentLocalTime() =>
+        TryGetCurrentLocalTime(out float localTime) ? localTime : 0.0f;
+
+    private bool TryGetCurrentLocalTime(out float localTime)
+    {
+        var preview = AetScenePreviewControl.ExistingInstance;
+        if (preview == null)
+        {
+            localTime = 0.0f;
+            return false;
+        }
+
+        return preview.TryGetLayerTime(Data, out localTime);
+    }
+
+    private static object CreateTimelineProperty(FgoAetProperty property)
+    {
+        return new
+        {
+            name = property.Name,
+            keyCount = property.KeyCount,
+            values = property.Values,
+            keyframes = CreateKeyframes(property.Values)
+        };
+    }
+
+    private static object[] CreateKeyframes(IReadOnlyList<float> values)
+    {
+        if (values.Count >= 4 && values.Count % 4 == 0)
+        {
+            int keyCount = values.Count / 4;
+            var keyframes = new object[keyCount];
+            for (int i = 0; i < keyCount; i++)
+            {
+                int offset = i * 4;
+                keyframes[i] = new
+                {
+                    index = i + 1,
+                    time = values[offset],
+                    value = values[offset + 1],
+                    inTangent = values[offset + 2],
+                    outTangent = values[offset + 3]
+                };
+            }
+
+            return keyframes;
+        }
+
+        return new[] { new { index = 1, values = values.ToArray() } };
+    }
+}
 public sealed class FgoAetSourceNode : Node<FgoAetSource>
 {
     public override NodeFlags Flags => NodeFlags.None;

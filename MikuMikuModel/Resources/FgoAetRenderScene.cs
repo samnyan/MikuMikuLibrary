@@ -25,6 +25,40 @@ public sealed class FgoAetRenderScene
     /// <summary>Gets the root layer instances in draw order.</summary>
     public IReadOnlyList<FgoAetRenderLayer> Layers { get; }
 
+    /// <summary>
+    /// Resolves a layer's local timeline time for a composition time. This is
+    /// also used by the Inspector so nested compositions use the same timing
+    /// conversion as the renderer.
+    /// </summary>
+    public bool TryGetLayerTime(FgoAetChild target, float compositionTime, out float localTime)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+        return TryGetLayerTime(Layers, target, compositionTime, out localTime);
+    }
+
+    private static bool TryGetLayerTime(
+        IEnumerable<FgoAetRenderLayer> layers,
+        FgoAetChild target,
+        float time,
+        out float localTime)
+    {
+        foreach (var layer in layers)
+        {
+            if (ReferenceEquals(layer.Data, target))
+            {
+                localTime = time;
+                return true;
+            }
+
+            if (layer.IsComposition &&
+                TryGetLayerTime(layer.Children, target, layer.Data.ToLocalTime(time), out localTime))
+                return true;
+        }
+
+        localTime = 0.0f;
+        return false;
+    }
+
     private FgoAetRenderScene(FgoAetRecord source, List<FgoAetRenderLayer> layers)
     {
         Source = source;
@@ -79,6 +113,19 @@ public sealed class FgoAetRenderScene
 
                 result.Add(layer);
             }
+
+            // Keep the raw parent slot available for inspection.  Current
+            // FGO Arcade exports use -1 here; actual composition nesting is
+            // expressed by the child Kind -> Scene record link and is handled
+            // by the recursive traversal above.  Do not derive a parent from
+            // Value1/offset +8: that field contains exporter flags.
+            var layersByIndex = result.ToDictionary(layer => layer.Data.Index);
+            foreach (var layer in result)
+            {
+                if (layersByIndex.TryGetValue(layer.Data.ParentIndex, out var parent) &&
+                    !ReferenceEquals(parent, layer))
+                    layer.Parent = parent;
+            }
         }
         finally
         {
@@ -88,7 +135,6 @@ public sealed class FgoAetRenderScene
         return result;
     }
 }
-
 /// <summary>One composition layer with stable topology and mutable visibility.</summary>
 public sealed class FgoAetRenderLayer
 {
@@ -104,11 +150,25 @@ public sealed class FgoAetRenderLayer
     /// <summary>Gets child layers for a linked composition.</summary>
     public List<FgoAetRenderLayer> Children { get; } = new();
 
+    /// <summary>Gets the FGO AE parent layer, if one is assigned.</summary>
+    public FgoAetRenderLayer Parent { get; internal set; }
+
     /// <summary>Gets whether the layer points to a linked composition.</summary>
     public bool IsComposition => Target?.Type == FgoAetRecordType.Scene;
 
     /// <summary>Gets whether the layer points to a Sprite asset.</summary>
     public bool IsAsset => Target?.Type == FgoAetRecordType.Asset;
+
+    /// <summary>
+    /// Gets the logical sprite dimensions carried by the AET asset record.
+    /// FGO's final sprite transform keeps these dimensions separate from the
+    /// atlas crop rectangle; the latter is only used for UV coordinates.
+    /// </summary>
+    public (int Width, int Height) LogicalSpriteSize =>
+        IsAsset && Target.Width is > 0 and <= ushort.MaxValue &&
+        Target.Height is > 0 and <= ushort.MaxValue
+            ? ((int)Target.Width, (int)Target.Height)
+            : (0, 0);
 
     /// <summary>Gets the layer's current visibility state.</summary>
     public bool Visible
@@ -118,7 +178,10 @@ public sealed class FgoAetRenderLayer
     }
 
     /// <summary>Evaluates the layer transform at a composition time in seconds.</summary>
-    public Matrix4x4 EvaluateTransform(float time, float duration, float inheritedOpacity,
+    public Matrix4x4 EvaluateTransform(
+        float time,
+        float duration,
+        float inheritedOpacity,
         out float opacity)
     {
         float scaleX = NormalizeScale(Data.EvaluateScaleX(time, duration));
@@ -137,21 +200,20 @@ public sealed class FgoAetRenderLayer
         float positionY = Data.EvaluatePositionY(time, duration);
         float positionZ = -Data.EvaluatePositionZ(time, duration);
 
-        // FGO's AetTransform_Calculate2D updates the matrix axes in this
-        // order: position, orientation, rotation, scale, then the already
-        // transformed negative anchor.  System.Numerics uses row-vector
-        // composition (and GLShaderProgram uploads its transpose), so the
-        // local pivot translation must be the first matrix in the chain.  If
-        // it is placed after the linear matrices, scale/rotation affect the
-        // sprite but not its anchor, which visibly displaces ring effects.
+        // Native AetTransform_Calculate2D builds the linear part in rotation
+        // order, then scales its X/Y/Z axes, and finally applies the negative
+        // anchor through that already-scaled/rotated matrix before adding
+        // position. System.Numerics uses row-vector composition (and the GL
+        // upload preserves that convention), so this is T(-anchor) * R * S *
+        // T(position), not T(-anchor) * S * R * T(position).
         var transform = Matrix4x4.CreateTranslation(-anchorX, -anchorY, -anchorZ) *
-                        Matrix4x4.CreateScale(scaleX, scaleY, scaleZ) *
                         Matrix4x4.CreateRotationX(ToRadians(orientationX)) *
                         Matrix4x4.CreateRotationY(ToRadians(-orientationY)) *
                         Matrix4x4.CreateRotationZ(ToRadians(orientationZ)) *
                         Matrix4x4.CreateRotationX(ToRadians(-rotationX)) *
                         Matrix4x4.CreateRotationY(ToRadians(-rotationY)) *
                         Matrix4x4.CreateRotationZ(ToRadians(rotationZ)) *
+                        Matrix4x4.CreateScale(scaleX, scaleY, scaleZ) *
                         Matrix4x4.CreateTranslation(positionX, positionY, positionZ);
 
         opacity = inheritedOpacity * NormalizeOpacity(Data.EvaluateOpacity(time, duration));
@@ -165,11 +227,11 @@ public sealed class FgoAetRenderLayer
         Target = target;
     }
 
-    private static float NormalizeScale(float value) =>
-        !float.IsFinite(value) ? 1.0f : Math.Abs(value) > 10.0f ? value / 100.0f : value;
+    public static float NormalizeScale(float value) =>
+        float.IsFinite(value) ? value : 1.0f;
 
-    private static float NormalizeOpacity(float value) =>
-        !float.IsFinite(value) ? 1.0f : Math.Clamp(Math.Abs(value) > 1.0f ? value / 100.0f : value, 0.0f, 1.0f);
+    public static float NormalizeOpacity(float value) =>
+        float.IsFinite(value) ? Math.Clamp(value, 0.0f, 1.0f) : 1.0f;
 
     private static float ToRadians(float degrees) =>
         float.IsFinite(degrees) ? degrees * (MathF.PI / 180.0f) : 0.0f;
