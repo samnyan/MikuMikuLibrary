@@ -1,4 +1,4 @@
-﻿using System.Reflection;
+using System.Reflection;
 using MikuMikuModel.Configurations;
 using MikuMikuModel.Mementos;
 using MikuMikuModel.Modules;
@@ -40,6 +40,9 @@ public abstract partial class Node<T> : INode where T : class
     private OpenFileDialog mImportDialog;
     private SaveFileDialog mExportDialog;
     private OpenFileDialog mReplaceDialog;
+
+    private NodeExportHandler mRawExportHandler;
+    private NodeReplaceHandler<T> mRawReplaceHandler;
 
     protected virtual T InternalData => mData;
 
@@ -345,6 +348,14 @@ public abstract partial class Node<T> : INode where T : class
         if (!Flags.HasFlag(NodeFlags.Export))
             return;
 
+        if (mRawExportHandler != null)
+        {
+            ConfigurationList.Instance.DetermineCurrentConfiguration(filePath);
+            mRawExportHandler(filePath);
+            OnExport(filePath);
+            return;
+        }
+
         var module = ModuleExportUtilities.GetModule(mExportHandlers.Keys, filePath);
 
         if (module == null)
@@ -372,7 +383,9 @@ public abstract partial class Node<T> : INode where T : class
             {
                 AutoUpgradeEnabled = true,
                 CheckPathExists = true,
-                Filter = ModuleFilterGenerator.GenerateFilter(mExportHandlers.Keys, FormatExtensionFlags.Export),
+                Filter = mRawExportHandler != null
+                    ? "All files (*.*)|*.*"
+                    : ModuleFilterGenerator.GenerateFilter(mExportHandlers.Keys, FormatExtensionFlags.Export),
                 OverwritePrompt = true,
                 Title = "Select a file to export to.",
                 ValidateNames = true,
@@ -398,6 +411,19 @@ public abstract partial class Node<T> : INode where T : class
     {
         if (!Flags.HasFlag(NodeFlags.Replace))
             return;
+
+        if (mRawReplaceHandler != null)
+        {
+            ConfigurationList.Instance.DetermineCurrentConfiguration(filePath);
+            var configuration = ConfigurationList.Instance.CurrentConfiguration;
+            var rawData = mRawReplaceHandler(filePath);
+            if (rawData == null)
+                return;
+
+            Replace(rawData);
+            SourceConfiguration = configuration;
+            return;
+        }
 
         var module = ModuleImportUtilities.GetModule(mReplaceHandlers.Keys, filePath);
         if (module == null)
@@ -433,7 +459,9 @@ public abstract partial class Node<T> : INode where T : class
                 AutoUpgradeEnabled = true,
                 CheckPathExists = true,
                 CheckFileExists = true,
-                Filter = ModuleFilterGenerator.GenerateFilter(mReplaceHandlers.Keys, FormatExtensionFlags.Import),
+                Filter = mRawReplaceHandler != null
+                    ? "All files (*.*)|*.*"
+                    : ModuleFilterGenerator.GenerateFilter(mReplaceHandlers.Keys, FormatExtensionFlags.Import),
                 Title = "Select a file to replace with.",
                 ValidateNames = true,
                 AddExtension = true
@@ -546,8 +574,14 @@ public abstract partial class Node<T> : INode where T : class
     protected void AddExportHandler<TModule>(NodeExportHandler handler) =>
         mExportHandlers[typeof(TModule)] = handler;
 
+    protected void AddRawExportHandler(NodeExportHandler handler) =>
+        mRawExportHandler = handler ?? throw new ArgumentNullException(nameof(handler));
+
     protected void AddReplaceHandler<TModule>(NodeReplaceHandler<T> handler) =>
         mReplaceHandlers[typeof(TModule)] = handler;
+
+    protected void AddRawReplaceHandler(NodeReplaceHandler<T> handler) =>
+        mRawReplaceHandler = handler ?? throw new ArgumentNullException(nameof(handler));
 
     protected ToolStripMenuItem CreateCustomHandler(string name, Action action,
         Keys shortcutKeys = Keys.None, CustomHandlerFlags flags = CustomHandlerFlags.None)

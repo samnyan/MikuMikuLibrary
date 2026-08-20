@@ -1,4 +1,4 @@
-﻿using MikuMikuModel.Resources;
+using MikuMikuModel.Resources;
 
 namespace MikuMikuModel.Nodes.IO;
 
@@ -32,17 +32,15 @@ public class StreamNode : Node<Stream>
 
     protected override void Initialize()
     {
-        AddExportHandler<Stream>(filePath =>
+        AddRawExportHandler(filePath =>
         {
-            using (var stream = File.Create(filePath))
-            {
-                if (Data.CanSeek)
-                    Data.Seek(0, SeekOrigin.Begin);
+            using var stream = File.Create(filePath);
+            if (Data.CanSeek)
+                Data.Seek(0, SeekOrigin.Begin);
 
-                Data.CopyTo(stream);
-            }
+            Data.CopyTo(stream);
         });
-        AddReplaceHandler<Stream>(File.OpenRead);
+        AddRawReplaceHandler(File.OpenRead);
     }
 
     protected override void PopulateCore()
