@@ -1,4 +1,5 @@
 using MikuMikuLibrary.Aets.Resources;
+using Ookii.Dialogs.WinForms;
 using MikuMikuModel.Modules;
 using MikuMikuModel.GUI.Controls;
 using MikuMikuModel.Nodes.IO;
@@ -25,6 +26,55 @@ public sealed class FgoSpriteTableNode : BinaryFileNode<FgoSpriteTable>
 
     protected override void Initialize()
     {
+        AddCustomHandler("Export with Texture", ExportWithTexture);
+    }
+
+    private void ExportWithTexture()
+    {
+        string tablePath;
+        string archivePath;
+
+        switch (Tag)
+        {
+            case FgoSpriteTableFileSource source:
+                tablePath = source.TablePath;
+                archivePath = source.ArchivePath;
+                break;
+            case string physicalTablePath:
+                tablePath = physicalTablePath;
+                archivePath = null;
+                break;
+            default:
+                tablePath = null;
+                archivePath = null;
+                break;
+        }
+
+        if (string.IsNullOrEmpty(tablePath) || !File.Exists(tablePath))
+        {
+            MessageBox.Show("Export with Texture is available only for a physical sprite table file.",
+                Program.Name, MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return;
+        }
+
+        using var dialog = new VistaFolderBrowserDialog
+        {
+            Description = "Select the Sprite Localization Studio project folder.",
+            UseDescriptionForTitle = true
+        };
+
+        if (dialog.ShowDialog() != DialogResult.OK)
+            return;
+
+        try
+        {
+            FgoSpriteTableLocalizationExporter.Export(tablePath, Data, dialog.SelectedPath, archivePath);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            MessageBox.Show($"Failed to export Sprite Localization Studio assets.\nReason: {exception.Message}",
+                Program.Name, MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
     }
 
     protected override void PopulateCore()

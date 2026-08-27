@@ -39,6 +39,23 @@ public sealed class AetResourceContext : IDisposable
         Changed?.Invoke(this, EventArgs.Empty);
     }
 
+    /// <summary>Sets one explicitly paired Sprite table and texture archive.</summary>
+    /// <param name="tablePath">The physical <c>spr_*_table.bin</c> path.</param>
+    /// <param name="archivePath">The matching or user-selected FARc path.</param>
+    public void SetSpritePackage(string tablePath, string archivePath)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(tablePath);
+        ArgumentException.ThrowIfNullOrWhiteSpace(archivePath);
+
+        var catalog = FgoSpriteCatalog.Create(new FgoSpritePackage(tablePath, archivePath));
+        var previousCatalog = FgoSprites;
+
+        RootPath = catalog.RootPath;
+        FgoSprites = catalog;
+        previousCatalog?.Dispose();
+        Changed?.Invoke(this, EventArgs.Empty);
+    }
+
     /// <summary>Clears the selected directory and releases all cached resources.</summary>
     public void Clear()
     {

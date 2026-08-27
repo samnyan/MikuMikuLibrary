@@ -86,6 +86,16 @@ public sealed class FgoSpriteCatalog : IDisposable
         return new FgoSpriteCatalog(fullRoot, packages);
     }
 
+    /// <summary>Creates a catalog for one explicitly paired Sprite table and archive.</summary>
+    /// <param name="package">The already paired Sprite package.</param>
+    /// <returns>A catalog that owns <paramref name="package"/>.</returns>
+    public static FgoSpriteCatalog Create(FgoSpritePackage package)
+    {
+        ArgumentNullException.ThrowIfNull(package);
+        return new FgoSpriteCatalog(Path.GetDirectoryName(package.TablePath)!,
+            new List<FgoSpritePackage> { package });
+    }
+
     /// <summary>Resolves a raw AET asset path or Sprite name.</summary>
     /// <param name="name">The asset path/name to resolve.</param>
     /// <returns>The best matching Sprite package entry, or <see langword="null"/>.</returns>

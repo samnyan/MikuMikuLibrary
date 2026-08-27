@@ -1,5 +1,6 @@
 ﻿using System.Reflection;
 using MikuMikuLibrary.IO;
+using MikuMikuLibrary.Aets.Resources;
 using MikuMikuLibrary.MasterTables;
 using MikuMikuModel.Configurations;
 using MikuMikuModel.Modules;
@@ -48,7 +49,71 @@ public static class NodeFactory
         }
 
         ConfigurationList.Instance.DetermineCurrentConfiguration(filePath);
-        return Create(module.ModelType, Path.GetFileName(filePath), module.Import(filePath));
+        var node = Create(module.ModelType, Path.GetFileName(filePath), module.Import(filePath));
+        if (node == null)
+            return null;
+
+        string fullPath = Path.GetFullPath(filePath);
+
+        if (module.ModelType == typeof(FgoSpriteTable))
+        {
+            string archivePath = FindAdjacentSpriteArchive(fullPath) ?? PromptForSpriteArchive(fullPath);
+            node.Tag = new MikuMikuModel.Resources.FgoSpriteTableFileSource(fullPath, archivePath);
+
+            if (archivePath == null)
+            {
+                MikuMikuModel.Resources.AetResourceContext.Instance.Clear();
+            }
+            else
+            {
+                try
+                {
+                    MikuMikuModel.Resources.AetResourceContext.Instance.SetSpritePackage(fullPath, archivePath);
+                }
+                catch (Exception exception) when (exception is InvalidDataException or IOException or UnauthorizedAccessException)
+                {
+                    MessageBox.Show($"Failed to load texture resources for {Path.GetFileName(fullPath)}.\nReason: {exception.Message}",
+                        Program.Name, MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            }
+        }
+        else
+            node.Tag = fullPath;
+
+        return node;
+    }
+
+    private static string FindAdjacentSpriteArchive(string tablePath)
+    {
+        const string suffix = "_table.bin";
+        string tableName = Path.GetFileName(tablePath);
+        if (!tableName.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        string archivePath = Path.Combine(Path.GetDirectoryName(tablePath)!,
+            tableName[..^suffix.Length] + ".farc");
+        return File.Exists(archivePath) ? archivePath : null;
+    }
+
+    private static string PromptForSpriteArchive(string tablePath)
+    {
+        MessageBox.Show(
+            $"No matching texture archive was found next to {Path.GetFileName(tablePath)}.\n" +
+            "Select the FARc archive containing texture.bin.",
+            Program.Name, MessageBoxButtons.OK, MessageBoxIcon.Information);
+
+        using var dialog = new OpenFileDialog
+        {
+            AutoUpgradeEnabled = true,
+            CheckFileExists = true,
+            CheckPathExists = true,
+            Filter = "FGO Sprite archive (*.farc)|*.farc|All files (*.*)|*.*",
+            InitialDirectory = Path.GetDirectoryName(tablePath),
+            Title = "Select the Sprite texture archive.",
+            ValidateNames = true
+        };
+
+        return dialog.ShowDialog() == DialogResult.OK ? dialog.FileName : null;
     }
 
     public static INode Create(string filePath)
