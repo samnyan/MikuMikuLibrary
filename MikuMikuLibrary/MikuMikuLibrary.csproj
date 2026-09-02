@@ -11,7 +11,7 @@
     <SignAssembly>True</SignAssembly>
     <AssemblyOriginatorKeyFile>..\MikuMikuLibrary.snk</AssemblyOriginatorKeyFile>
 	<NoWarn>1701;1702;CA1416</NoWarn>
-    <AssemblyVersion>0.2</AssemblyVersion>
+    <AssemblyVersion>0.3</AssemblyVersion>
   </PropertyGroup>
 
   <ItemGroup>

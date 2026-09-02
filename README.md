@@ -11,6 +11,7 @@ This version also includes FATE/Grand Order Arcade.
 - Texture export/replace
 - Sprite table preview
 - AET preview (Not fully correct)
+- _table.bin Sprite table export for [sprite-localization-studio](https://github.com/samnyan/sprite-localization-studio)
 
 # Building
 

@@ -13,7 +13,7 @@
     <ApplicationIcon>Resources\Icons\Application.ico</ApplicationIcon>
     <RuntimeIdentifiers>win-x86;win-x64</RuntimeIdentifiers>
     <NoWarn>1701;1702;8002</NoWarn>
-    <AssemblyVersion>0.2</AssemblyVersion>
+    <AssemblyVersion>0.3</AssemblyVersion>
   </PropertyGroup>
   
   <ItemGroup>
